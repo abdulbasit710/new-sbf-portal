@@ -219,3 +219,73 @@ export async function getBradHealth() {
   }));
   return { ok: results.every((item) => item.ok), configured: { notionApiKey: Boolean(process.env.NOTION_API_KEY), bradPartnerPageId: Boolean(process.env.BRAD_PARTNER_PAGE_ID), automaticExactTitleResolution: true }, sources: results };
 }
+
+const propertyForType = (property: any, value: string, title = false) => {
+  switch (property?.type) {
+    case "title": return { title: [{ type: "text", text: { content: value.slice(0, 1900) } }] };
+    case "rich_text": return { rich_text: [{ type: "text", text: { content: value.slice(0, 1900) } }] };
+    case "number": { const number = Number(value.replace(/[$,]/g, "")); return { number: Number.isFinite(number) ? number : null }; }
+    case "select": return { select: value ? { name: value } : null };
+    case "status": return { status: value ? { name: value } : null };
+    case "multi_select": return { multi_select: value.split(",").map((name) => ({ name: name.trim() })).filter((item) => item.name) };
+    case "checkbox": return { checkbox: /^(yes|true|approved|active)$/i.test(value) };
+    case "url": return { url: value || null };
+    case "email": return { email: value || null };
+    case "phone_number": return { phone_number: value || null };
+    case "date": return { date: value ? { start: value } : null };
+    default: return title ? { title: [{ type: "text", text: { content: value.slice(0, 1900) } }] } : null;
+  }
+};
+
+async function relationIdentityForEmail(relationProperty: any, email: string) {
+  if (email.toLowerCase() === "brad@keatyrealestate.com") return resolveBradPartnerIdForRelation(relationProperty);
+  const targetId = String(relationProperty?.relation?.data_source_id || relationProperty?.relation?.database_id || "").replace(/-/g, "");
+  if (!targetId) throw new BradPortalError("The destination ownership relation does not expose a target data source.", "config");
+  const pages = await queryDatabaseWithPagination(targetId);
+  const page = pages.find((candidate) => Object.values(candidate.properties).map(valueOf).some((value) => value.trim().toLowerCase() === email.trim().toLowerCase()));
+  if (!page) throw new BradPortalError(`No Notion relationship record was found for ${email}.`, "config");
+  return page.id.replace(/-/g, "");
+}
+
+export async function createCorePortalRecord(email: string, submissionType: "new-asset" | "buy-box", fields: Record<string, string>) {
+  const key: BradDatasetKey = submissionType === "new-asset" ? "assets" : "buyBoxes";
+  const config = configs[key]; const client = notion();
+  const dataSourceId = await resolveExactNotionId(config.env, config.title, "data_source");
+  const source = await client.dataSources.retrieve({ data_source_id: dataSourceId });
+  const schema = (source as any).properties || {};
+  const titleKey = Object.keys(schema).find((name) => schema[name]?.type === "title");
+  const relationKey = schemaKey(schema, config.relation, "relation");
+  if (!titleKey || !relationKey) throw new BradPortalError(`${config.title} is missing its title or ${config.relation[0]} relation.`, key);
+  const ownerId = await relationIdentityForEmail(schema[relationKey], email);
+  const recordTitle = fields["Asset / match / item name"] || fields["Investor / buyer name"] || (submissionType === "new-asset" ? "New partner asset" : "New partner buy box");
+  const properties: Record<string, any> = {
+    [titleKey]: propertyForType(schema[titleKey], recordTitle, true),
+    [relationKey]: { relation: [{ id: ownerId }] },
+  };
+  const mappings: Array<[string[], string]> = [
+    [["Asset Name", "Opportunity Name", "Name"], recordTitle],
+    [["Investor / Buyer Name", "Investor Name", "Buyer Name"], fields["Investor / buyer name"] || ""],
+    [["Contact Details", "Contact", "Email"], fields["Contact details"] || ""],
+    [["Mandate Criteria", "Criteria", "Strategy"], fields["Mandate criteria"] || ""],
+    [["Budget", "Price", "Value", "Capital Available"], fields.Budget || ""],
+    [["Geography", "Market", "Location"], fields.Geography || ""],
+    [["Asset Class", "Asset Type", "Property Type"], fields["Asset class"] || ""],
+    [["NDA Status"], fields["NDA status"] || ""],
+    [["Proof of Funds Status", "POF Status"], fields["Proof-of-funds status"] || ""],
+    [["Document Links", "Documents", "Source URL"], fields["Document links"] || ""],
+    [["Notes", "Partner Notes", "Special Requirements"], fields["Notes / special requirements"] || ""],
+    [["Submitted By", "Submitted Email", "Portal Email"], email],
+  ];
+  mappings.forEach(([aliases, value]) => {
+    if (!value) return; const keyName = schemaKey(schema, aliases); if (!keyName || keyName === titleKey || keyName === relationKey) return;
+    const payload = propertyForType(schema[keyName], value); if (payload) properties[keyName] = payload;
+  });
+  const statusName = schemaKey(schema, ["Status", "Asset Status", "Mandate Status"]);
+  if (statusName && !properties[statusName]) {
+    const options = (schema[statusName]?.[schema[statusName].type]?.options || []).map((option: any) => option.name);
+    const desired = ["Submitted for Review", "Pending Review", "New", "Draft", "Active"].find((candidate) => options.some((option: string) => option.toLowerCase() === candidate.toLowerCase())) || (schema[statusName].type === "rich_text" ? "Submitted for Review" : "");
+    if (desired) { const payload = propertyForType(schema[statusName], desired); if (payload) properties[statusName] = payload; }
+  }
+  const response = await client.pages.create({ parent: { data_source_id: dataSourceId }, properties } as any);
+  return { id: response.id, title: recordTitle, route: config.title, status: "Submitted for Review", source: "notion" as const };
+}

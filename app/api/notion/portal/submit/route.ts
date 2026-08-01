@@ -6,6 +6,7 @@ import {
   uploadPartnerFileToNotion,
   type PartnerPortalSubmissionInput,
 } from "@/lib/notionService";
+import { createCorePortalRecord } from "@/lib/bradPortal";
 
 
 export const runtime = "nodejs";
@@ -112,6 +113,26 @@ export async function POST(request: Request) {
         approvalStatus: "Submitted for Review",
       });
       return NextResponse.json({ success: true, data: result });
+    }
+
+    if (submissionType === "new-asset" || submissionType === "buy-box") {
+      const coreRecord = await createCorePortalRecord(email, submissionType, fields);
+      // Preserve the general submissions ledger and uploaded documents for audit,
+      // but never hide a successfully created dedicated CORE record if that
+      // secondary audit write is unavailable.
+      const audit = await createPartnerPortalSubmission(email, input).catch((auditError) => {
+        console.error("[Portal submission] CORE record created, audit ledger write failed.", auditError);
+        return null;
+      });
+      return NextResponse.json({
+        success: true,
+        data: {
+          ...coreRecord,
+          auditId: audit?.id,
+          auditRoute: audit?.route,
+          uploadedFiles: uploadedFiles.map((file) => ({ name: file.name, size: file.size, contentType: file.contentType })),
+        },
+      });
     }
 
     const result = await createPartnerPortalSubmission(email, input);
