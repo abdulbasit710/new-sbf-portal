@@ -74,6 +74,7 @@ export default function InvestorManager() {
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [selected, setSelected] = useState<PortalDatabaseRow | null>(null);
 
   const load = useCallback(async () => {
     if (!session?.email) return;
@@ -182,7 +183,7 @@ export default function InvestorManager() {
                 {rows.length ? `${rows.length} matching investor${rows.length === 1 ? "" : "s"}` : "No matching investor found"}
               </div>
               {rows.map((row) => (
-                <div key={row.id} className="flex flex-col gap-4 border-b border-white/[0.06] px-4 py-4 last:border-b-0 sm:flex-row sm:items-center sm:justify-between">
+                <div key={row.id} role="button" tabIndex={0} onClick={() => setSelected(row)} onKeyDown={(event) => { if (event.key === "Enter") setSelected(row); }} className="flex cursor-pointer flex-col gap-4 border-b border-white/[0.06] px-4 py-4 transition hover:bg-gold/[0.05] last:border-b-0 sm:flex-row sm:items-center sm:justify-between">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="font-medium text-chalk">{row.title || "Untitled investor"}</h3>
@@ -198,14 +199,11 @@ export default function InvestorManager() {
                       ].filter(Boolean).join(" · ") || "Capital relationship"}
                     </p>
                   </div>
-                  <Button
-                    className="shrink-0"
-                    variant="outline"
-                    disabled={busy === row.id}
-                    onClick={() => void archive(row)}
-                  >
+                  <div className="shrink-0" onClick={(event) => event.stopPropagation()}>
+                  <Button variant="outline" disabled={busy === row.id} onClick={() => void archive(row)}>
                     {busy === row.id ? "Archiving…" : "Archive"}
                   </Button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -231,6 +229,10 @@ export default function InvestorManager() {
             <Button type="submit" disabled={busy === "save"}>{busy === "save" ? "Saving to Notion…" : "Add investor"}</Button>
           </div>
         </form>
+      </Modal>
+
+      <Modal open={Boolean(selected)} onClose={() => setSelected(null)} title={selected?.title || "Investor record"} sub="Live record from 04 — Investors, Buyers & Lenders — CORE" width="max-w-4xl">
+        {selected && <div className="grid max-h-[65vh] gap-3 overflow-y-auto md:grid-cols-2">{Object.entries(selected.fields).filter(([, value]) => Boolean(value)).map(([key, value]) => <div key={key} className="rounded-xl border border-white/[0.07] bg-black/20 p-4"><div className="text-xs text-muted">{key}</div><div className="mt-1 whitespace-pre-wrap break-words text-sm text-chalk">{value}</div></div>)}</div>}
       </Modal>
     </>
   );

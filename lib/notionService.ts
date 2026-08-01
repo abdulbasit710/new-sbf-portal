@@ -2226,7 +2226,23 @@ export async function getDynamicPortalForEmail(email: string): Promise<DynamicPo
 
   const blocks = await getDynamicBlocksForPage(portalPage.id, user);
   const portalOnlySections = sectionsFromPortalBlocks(blocks);
-  const sections = portalOnlySections.length ? portalOnlySections : await getPortalDataSectionsForUser(user);
+  const coreSections = await getPortalDataSectionsForUser(user);
+  const sectionMap = new Map<string, DynamicPortalDataSection>();
+  [...portalOnlySections, ...coreSections].forEach((candidate) => {
+    const current = sectionMap.get(candidate.key);
+    if (!current) {
+      sectionMap.set(candidate.key, candidate);
+      return;
+    }
+    sectionMap.set(candidate.key, {
+      ...current,
+      title: current.title || candidate.title,
+      description: current.description || candidate.description,
+      sourceTitles: Array.from(new Set([...current.sourceTitles, ...candidate.sourceTitles])),
+      rows: uniquePortalRows([...current.rows, ...candidate.rows]),
+    });
+  });
+  const sections = Array.from(sectionMap.values());
 
   return {
     title: portalPage.title,
@@ -3169,6 +3185,49 @@ export async function archiveInvestorManagerRecord(email: string, rowId: string)
 
   await notion.pages.update({ page_id: rowId, archived: true });
   return { id: rowId, archived: true, source: "notion" as const };
+}
+
+export async function createPartnerUnderwritingRecord(email: string, assetId: string) {
+  const user = await findApprovedPortalUser(email);
+  if (!user || !["partner", "admin"].includes(user.role)) throw new NotionConfigError("Creating underwriting requires an active partner or admin account.");
+  const [underwritingId, assetSourceId] = await Promise.all([
+    firstResolvedDataSource(["07 — Underwriting Engine — CORE", "07 Underwriting Engine CORE", "Underwriting Engine — CORE"]),
+    firstResolvedDataSource(["05 — Assets — CORE", "05 Assets CORE", "Assets — CORE"]),
+  ]);
+  if (!underwritingId || !assetSourceId) throw new NotionConfigError("Assets CORE or Underwriting Engine CORE is not shared with the SBF WORLD connection.");
+  const notion = getNotionClient();
+  const [assetPage, dataSource, existingPages] = await Promise.all([
+    notion.pages.retrieve({ page_id: assetId }), retrieveDataSource(underwritingId), getDatabaseRows(underwritingId),
+  ]);
+  if (!isPageObject(assetPage)) throw new NotionConfigError("The selected asset could not be opened.");
+  const assetFields = pageProperties(assetPage);
+  if (user.role !== "admin" && !rowBelongsToUser(assetFields, user, "05 — Assets — CORE")) throw new NotionConfigError("This asset is not assigned to the current partner.");
+  const alreadyExists = existingPages.some((page) => {
+    const fields = pageProperties(page);
+    return Object.values(fields).some((value) => normalizeComparable(value).includes(normalizeComparable(assetId.replace(/-/g, "")))) ||
+      normalizeComparable(getField(fields, ["asset", "related asset", "asset name", "opportunity"])) === normalizeComparable(titleFromFields(assetFields));
+  });
+  if (alreadyExists) throw new NotionConfigError("Underwriting already exists for this asset.");
+
+  const schema = dataSource.properties ?? {};
+  const titleKey = titleSchemaKey(schema);
+  if (!titleKey) throw new NotionConfigError("Underwriting Engine CORE does not have a title property.");
+  const assetTitle = titleFromFields(assetFields) || "SBF WORLD Asset";
+  const properties: Record<string, unknown> = { [titleKey]: titleProperty(`${assetTitle} — Underwriting`) };
+  const setRelation = (aliases: string[], id: string) => { const key = findSchemaKey(schema, aliases); if (key && schema[key]?.type === "relation") properties[key] = { relation: [{ id }] }; };
+  const setValue = (aliases: string[], value: string) => { const key = findSchemaKey(schema, aliases); if (key && key !== titleKey && schema[key] && schema[key].type !== "relation") properties[key] = notionPropertyForType(schema[key].type, value); };
+  setRelation(["Asset", "Related Asset", "Opportunity", "Subject Asset"], assetId);
+  setRelation(["Related Partner", "Partner", "Source Partner", "Owner"], user.id);
+  setValue(["Asset Name", "Opportunity Name", "Subject"], assetTitle);
+  setValue(["Submitted By", "Partner Scope", "Portal Email"], [user.name, user.email, user.contactId].filter(Boolean).join(" | "));
+  const statusKey = findSchemaKey(schema, ["Status", "Underwriting Status", "Stage"]);
+  if (statusKey) {
+    const options = investorFieldOptions(schema[statusKey]);
+    const status = ["Not Started", "Requested", "New", "In Review", "Pending"].find((candidate) => options.some((option) => normalizeComparable(option) === normalizeComparable(candidate))) || (schema[statusKey].type === "rich_text" ? "Requested" : "");
+    if (status) properties[statusKey] = notionPropertyForType(schema[statusKey].type, status);
+  }
+  const response = await createPageViaNotionApi({ parent: { data_source_id: underwritingId }, properties, children: [notionHeading("Partner Underwriting Request"), notionParagraph(`Create underwriting for ${assetTitle}.`), notionParagraph(`Requested by ${user.name} (${user.email}).`)] });
+  return { id: response.id, title: `${assetTitle} — Underwriting`, status: "Requested", source: "notion" as const };
 }
 
 export async function createBradMatchRecord(

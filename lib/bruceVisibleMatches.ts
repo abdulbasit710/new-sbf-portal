@@ -1,4 +1,4 @@
-import { getDynamicPortalForEmail, type PortalDatabaseRow } from "@/lib/notionService";
+import { findApprovedPortalUser, getDynamicPortalForEmail, type PortalDatabaseRow } from "@/lib/notionService";
 
 export type BruceVisibleMatch = {
   id: string;
@@ -114,4 +114,11 @@ export async function getBruceVisibleMatches(email = "bruce@edenelevations3.com"
   });
   const matches = Array.from(final.values()).sort((a, b) => (Number(b.score.replace(/[^0-9.]/g, "")) || 0) - (Number(a.score.replace(/[^0-9.]/g, "")) || 0));
   return { matches, visibleValue: matches.reduce((sum, match) => sum + match.value, 0), debug: decisions.map(({ decision }) => decision) };
+}
+
+export async function getInvestorPofStatus(email: string) {
+  const user = await findApprovedPortalUser(email);
+  const fields = user?.rawFields || {};
+  const value = field(fields, ["proof of funds status", "proof of funds", "pof status", "pof"]);
+  return { pofReady: /approved|verified|uploaded|received|on file|complete|yes/i.test(value), pofStatus: value || "Not uploaded" };
 }

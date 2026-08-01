@@ -837,9 +837,32 @@ function PartnerSubmissionForms({ email, quickActions, onSubmitted }: { email: s
   const [loading, setLoading] = useState(false);
   const [documents, setDocuments] = useState<File[]>([]);
   const [fileInputKey, setFileInputKey] = useState(0);
+  const [extracting, setExtracting] = useState(false);
 
   const setField = (key: keyof PartnerFormState, value: string) => {
     setFields((current) => ({ ...current, [key]: value }));
+  };
+
+  const selectDocuments = async (files: File[]) => {
+    setDocuments(files);
+    if (!files.length || submissionType !== "new-asset") return;
+    setExtracting(true);
+    setError("");
+    setStatus("Reading the asset document and filling the form…");
+    try {
+      const form = new FormData();
+      form.append("document", files[0]);
+      const response = await fetch("/api/notion/portal/extract-asset", { method: "POST", body: form });
+      const payload = await response.json();
+      if (!response.ok || !payload.success) throw new Error(payload.error || "Unable to read document.");
+      setFields((current) => ({ ...current, ...Object.fromEntries(Object.entries(payload.data).filter(([, value]) => Boolean(value))) } as PartnerFormState));
+      setStatus("Asset document read successfully. Review the populated fields, then submit to Assets — CORE.");
+    } catch (err) {
+      setStatus("");
+      setError(err instanceof Error ? err.message : "Unable to read document.");
+    } finally {
+      setExtracting(false);
+    }
   };
 
   const submit = async (e: React.FormEvent) => {
@@ -941,7 +964,8 @@ function PartnerSubmissionForms({ email, quickActions, onSubmitted }: { email: s
             key={fileInputKey}
             type="file"
             multiple
-            onChange={(event) => setDocuments(Array.from(event.currentTarget.files ?? []))}
+            accept=".pdf,.doc,.docx,.txt,image/*"
+            onChange={(event) => void selectDocuments(Array.from(event.currentTarget.files ?? []))}
             className="mt-4 w-full rounded-xl border border-dashed border-gold/25 bg-black/20 px-4 py-4 text-sm text-chalk file:mr-4 file:rounded-lg file:border-0 file:bg-gold file:px-4 file:py-2 file:text-sm file:font-semibold file:text-black hover:border-gold/45"
           />
           {documents.length > 0 && (
@@ -2400,6 +2424,32 @@ function MatchingEnginePanel({
   );
 }
 
+function CreateUnderwritingPanel({ portal, email, onCreated }: { portal: DynamicPortalPage | null; email: string; onCreated: () => Promise<void> }) {
+  const assets = rowsForPortalView(portal, "assets");
+  const underwriting = rowsForPortalView(portal, "underwriting");
+  const relatedText = underwriting.map((row) => `${row.title} ${Object.values(row.fields).join(" ")}`.toLowerCase()).join(" | ");
+  const available = assets.filter((asset) => {
+    const name = assetNameForRow(asset).toLowerCase();
+    const status = fieldValue(asset.fields, ["underwriting status", "underwriting", "diligence status"]);
+    return !/complete|completed|approved|underwritten|in progress|in review|requested/i.test(status) && !relatedText.includes(name);
+  });
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState("");
+  const [notice, setNotice] = useState("");
+  const create = async (asset: PortalDatabaseRow) => {
+    setBusy(asset.id); setNotice("");
+    try {
+      const response = await fetch("/api/notion/underwriting", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, assetId: asset.id }) });
+      const payload = await response.json();
+      if (!response.ok || !payload.success) throw new Error(payload.error || "Unable to create underwriting.");
+      setNotice(`${assetNameForRow(asset)} was added to Underwriting Engine — CORE.`);
+      await onCreated();
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Unable to create underwriting."); }
+    finally { setBusy(""); }
+  };
+  return <Card className="overflow-hidden border-gold/20"><CardHeader title="Create Underwriting" sub="Create an underwriting record for any of your assets that does not already have one." action={<Button onClick={() => setOpen(true)} disabled={!available.length}><span className="mr-2 inline-flex">{Icon.plus(17)}</span>Create underwriting</Button>} /><div className="p-5 text-sm text-muted"><span className="text-gold">{available.length}</span> asset{available.length === 1 ? "" : "s"} currently available for underwriting.</div><Modal open={open} onClose={() => setOpen(false)} title="Create underwriting" sub="Assets without an existing underwriting record" width="max-w-4xl"><div className="space-y-3">{notice && <div className="rounded-xl border border-gold/25 bg-gold/10 p-3 text-sm text-gold">{notice}</div>}{available.length ? available.map((asset) => <div key={asset.id} className="flex flex-col gap-3 rounded-2xl border border-white/[0.07] p-4 sm:flex-row sm:items-center sm:justify-between"><div><div className="font-medium text-chalk">{assetNameForRow(asset)}</div><div className="mt-1 text-xs text-muted">{assetTypeForRow(asset)} · {geographyForRow(asset) || "Market pending"}</div></div><Button size="sm" onClick={() => void create(asset)} disabled={Boolean(busy)}>{busy === asset.id ? "Creating…" : "Create underwriting"}</Button></div>) : <div className="rounded-xl border border-white/[0.07] p-5 text-sm text-muted">All visible assets already have underwriting or a request in progress.</div>}</div></Modal></Card>;
+}
+
 export default function DynamicPortalDashboard({ view = "overview" }: { view?: PortalView }) {
   const { session, ready } = useSession();
   const [portal, setPortal] = useState<DynamicPortalPage | null>(null);
@@ -2517,6 +2567,7 @@ export default function DynamicPortalDashboard({ view = "overview" }: { view?: P
 
       {view === "underwriting" && (
         <>
+          <CreateUnderwritingPanel portal={portal} email={user?.email ?? ""} onCreated={loadPortal} />
           <RecordCardDeck portal={portal} view="underwriting" title="Underwriting Output Deck" subtitle="Partner-visible underwriting and diligence outputs only. Protected notes and internal strategy stay hidden." />
           <SectionCollection portal={portal} keys={["underwritten", "underwriting", "diligence", "documents"]} emptyTitle="Approved underwriting outputs" />
           <RulesPanel portal={portal} />

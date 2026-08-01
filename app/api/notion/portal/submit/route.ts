@@ -7,6 +7,7 @@ import {
   type PartnerPortalSubmissionInput,
 } from "@/lib/notionService";
 import { createCorePortalRecord } from "@/lib/bradPortal";
+import { getInvestorPofStatus } from "@/lib/bruceVisibleMatches";
 
 
 export const runtime = "nodejs";
@@ -110,9 +111,14 @@ export async function POST(request: Request) {
         price: fields.Price,
         score: fields["Match Score"],
         sourcePartner: fields["Source Partner Lane"],
-        approvalStatus: "Submitted for Review",
+        approvalStatus: "Approved",
       });
       return NextResponse.json({ success: true, data: result });
+    }
+
+    if (submissionType === "underwriting" && fields.Request === "Request Full Underwriting") {
+      const pof = await getInvestorPofStatus(email);
+      if (!pof.pofReady) return NextResponse.json({ success: false, error: "Upload and verify proof of funds before requesting full underwriting." }, { status: 403 });
     }
 
     if (submissionType === "new-asset" || submissionType === "buy-box") {

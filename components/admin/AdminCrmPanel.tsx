@@ -144,6 +144,18 @@ function FieldGrid({ fields }: { fields: Record<string, string> }) {
   );
 }
 
+function PeopleDirectory({ data }: { data: AdminCrmSnapshot }) {
+  const [query, setQuery] = useState("");
+  const [person, setPerson] = useState<AdminCrmSnapshot["users"][number] | null>(null);
+  const people = data.users.filter((user) => [user.name, user.email, user.role, user.relationshipType, user.contactId, ...Object.values(user.rawFields || {})].join(" ").toLowerCase().includes(query.toLowerCase()));
+  return <Card>
+    <CardHeader title={`People & Portal Access (${data.users.length})`} sub="Every live person/login from God's Blueprint. Click any person to inspect all portal identity and access fields." />
+    <div className="border-b border-white/[0.06] p-4"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search person, email, role, Contact ID…" className="w-full rounded-xl border border-white/10 bg-ink-850 px-4 py-3 text-sm text-chalk outline-none focus:border-gold/40" /></div>
+    <div className="grid gap-3 p-5 md:grid-cols-2 xl:grid-cols-3">{people.map((user) => <button key={`${user.id}-${user.email}`} onClick={() => setPerson(user)} className="rounded-2xl border border-white/[0.07] bg-white/[0.025] p-4 text-left hover:border-gold/40"><div className="flex justify-between gap-3"><div><div className="font-medium text-chalk">{user.name}</div><div className="mt-1 font-mono text-xs text-muted">{user.email}</div></div><span className={`h-fit rounded-full border px-2 py-1 text-[10px] ${statusTone(user.status)}`}>{user.status}</span></div><div className="mt-3 text-xs text-gold">{user.role} · {user.relationshipType || "Portal user"}</div><div className="mt-2 text-xs text-muted">Contact ID: {text(user.contactId)} · Access: {text(user.accessLevel)}</div></button>)}</div>
+    {person && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"><div className="glass max-h-[86vh] w-full max-w-4xl overflow-y-auto rounded-3xl p-6"><div className="mb-5 flex items-start justify-between gap-4"><div><div className="label-mono text-gold">Read-only portal identity</div><h3 className="mt-2 text-2xl text-chalk">{person.name}</h3><p className="mt-1 text-sm text-muted">{person.email} · {person.role} · {person.relationshipType}</p></div><Button size="sm" variant="outline" onClick={() => setPerson(null)}>Close</Button></div><FieldGrid fields={{ Name: person.name, Email: person.email, Role: person.role, "Relationship Type": person.relationshipType, Status: person.status, "Contact ID": person.contactId || "", "Membership Tier": person.membershipTier || "", "Access Level": person.accessLevel || "", Interests: person.interests || "", "NDA Status": person.ndaStatus || "", Verification: person.verificationStatus || "", ...(person.rawFields || {}) }} /></div></div>}
+  </Card>;
+}
+
 function BlueprintSection({ data, query, setQuery, onOpen }: { data: AdminCrmSnapshot; query: string; setQuery: (q: string) => void; onOpen: (module: AdminBlueprintModule) => void }) {
   const [modulePage, setModulePage] = useState(1);
   const modules = useMemo(() => {
@@ -729,7 +741,9 @@ export default function AdminCrmPanel() {
 
           {data && section === "activity" && <AdminActivityLedger rows={data.rows} users={data.users} />}
 
-          {data && section !== "blueprint" && (
+          {data && section === "people" && <PeopleDirectory data={data} />}
+
+          {data && !["blueprint", "activity", "people"].includes(section) && (
             <>
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                 <KpiWidget label="Total CRM Rows" value={String(data.totals.totalRows)} icon={Icon.layers(18)} />
