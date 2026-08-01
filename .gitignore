@@ -28,3 +28,8 @@ pnpm-debug.log*
 Thumbs.db
 .vscode/
 .idea/
+
+# Local pre-flattening backups (not deployed)
+sbf_admin_partner_approval_notifications_work/
+_source_backup/
+_workspace_package.backup.json
