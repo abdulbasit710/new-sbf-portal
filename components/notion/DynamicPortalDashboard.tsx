@@ -1160,6 +1160,16 @@ function SimpleCommandCenter({
   user: any;
   onRefresh: () => Promise<void>;
 }) {
+  const [liveSummary, setLiveSummary] = useState<null | {
+    assets: { total: number }; buyBoxes: { total: number }; investors: { total: number };
+    underwriting: { total: number }; matches: { total: number; visible: number };
+  }>(null);
+  useEffect(() => {
+    if (!user?.email) return;
+    void fetch(`/api/portal/brad/summary?email=${encodeURIComponent(user.email)}`, { cache: "no-store" })
+      .then(async (response) => { const payload = await response.json(); if (response.ok && payload.success) setLiveSummary(payload.data); })
+      .catch(() => undefined);
+  }, [user?.email]);
   const assetRows = rowsForPortalView(portal, "assets");
   const buyBoxRows = rowsForPortalView(portal, "buy-box");
   const investorRows = rowsForPortalView(portal, "investors");
@@ -1169,6 +1179,13 @@ function SimpleCommandCenter({
   const allRows = mergedPortalRows(assetRows, buyBoxRows, investorRows, underwritingRows, matchRows, submissionRows);
   const totalVisibleValue = allRows.reduce((sum, row) => sum + rowCapitalValue(row), 0);
   const latest = submissionRows.slice(0, 4);
+  const countAudit = [
+    ["Assets", liveSummary?.assets.total ?? assetRows.length, "/sbf-vault", "Relation: Source Partner"],
+    ["Buy Boxes / Mandates", liveSummary?.buyBoxes.total ?? buyBoxRows.length, "/buy-box", "Relation: Owner Partner"],
+    ["Underwriting", liveSummary?.underwriting.total ?? underwritingRows.length, "/underwriting", "Relation: Related Partner"],
+    ["Investors / Buyers / Lenders", liveSummary?.investors.total ?? investorRows.length, "/investors", "Relation: Source Partner"],
+    ["Matches", liveSummary?.matches.total ?? matchRows.length, "/deals", liveSummary ? `${liveSummary.matches.visible} partner-visible` : "Relation: Related Partner"],
+  ] as const;
 
   return (
     <div className="space-y-6">
@@ -1188,6 +1205,13 @@ function SimpleCommandCenter({
           </div>
         </div>
       </div>
+
+      <Card className="overflow-hidden border-gold/15">
+        <CardHeader title="Brad's CORE totals" sub="Live God’s Blueprint counts filtered by Brad Gaubert’s Notion relation page ID." />
+        <div className="grid gap-px bg-white/[.06] sm:grid-cols-5">
+          {countAudit.map(([label, live, href, detail]) => <Link key={label} href={href} className="bg-ink-900 p-4 transition hover:bg-gold/[.06]"><div className="label-mono text-muted">{label}</div><div className="mt-2 text-2xl font-semibold text-chalk">{live}</div><div className="mt-1 text-xs text-emerald-300">{detail}</div></Link>)}
+        </div>
+      </Card>
 
       <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-5">
         <SimpleCommandCard
@@ -1665,6 +1689,17 @@ function RecordCardDeck({
                 <div className="rounded-xl border border-white/[0.06] bg-black/20 p-3"><div className="label-mono text-muted">Geography</div><div className="mt-1 truncate">{geo}</div></div>
                 <div className="sm:col-span-2 rounded-xl border border-white/[0.06] bg-black/20 p-3"><div className="label-mono text-muted">Next Step</div><div className="mt-1 truncate">{next}</div></div>
               </div>
+              {view === "investors" && (
+                <div
+                  role="link"
+                  tabIndex={0}
+                  onClick={(event) => { event.stopPropagation(); window.location.href = `/investors/${row.id}/buy-boxes`; }}
+                  onKeyDown={(event) => { if (event.key === "Enter") { event.stopPropagation(); window.location.href = `/investors/${row.id}/buy-boxes`; } }}
+                  className="relative z-20 mt-4 flex items-center justify-between rounded-xl border border-gold/25 bg-gold/[.08] px-4 py-3 text-gold transition hover:bg-gold/[.13]"
+                >
+                  <span className="flex items-center gap-2">{Icon.trend(18)} Investor buy boxes</span><span>Open →</span>
+                </div>
+              )}
             </button>
           );
         })}
@@ -1700,10 +1735,11 @@ function RecordCardDeck({
             </div>
             <div className="grid gap-3 md:grid-cols-2">
               {safeAllFieldsForModal(selected, hideFinancial).map(([key, value]) => (
-                <div key={key} className="rounded-2xl border border-white/[0.06] bg-white/[0.025] p-4">
+                <Link key={key} href={`/portal-record/${selected.id}?field=${encodeURIComponent(key)}`} className="rounded-2xl border border-white/[0.06] bg-white/[0.025] p-4 transition hover:border-gold/40 hover:bg-gold/[.04]">
                   <div className="label-mono text-muted">{cleanLabel(key)}</div>
                   <div className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-chalk/80">{value}</div>
-                </div>
+                  <div className="mt-3 text-xs text-gold">Open field →</div>
+                </Link>
               ))}
             </div>
           </div>

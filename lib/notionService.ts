@@ -11,6 +11,7 @@ import {
   type BlueprintModuleKey,
 } from "./blueprintRegistry";
 import type { Role } from "./types";
+import { getBradAllData } from "./bradPortal";
 
 export interface GoldEmblemData {
   title: string;
@@ -1268,6 +1269,41 @@ const getDynamicBlocksForPage = async (pageId: string, user: BlueprintUser) => {
   return blocks.filter((block): block is DynamicPortalBlock => Boolean(block));
 };
 
+const portalSectionKeyForSource = (title: string) => {
+  const value = normalizeComparable(title);
+  if (value.includes("underwriting")) return "underwritten-assets";
+  if (value.includes("investor") || value.includes("buyer") || value.includes("lender")) return "investors";
+  if (value.includes("buy box") || value.includes("mandate")) return "buy-box-signals";
+  if (value.includes("match") || value.includes("deal flow")) return "active-matches";
+  if (value.includes("asset") || value.includes("vault")) return "assets";
+  return "";
+};
+
+const sectionsFromPortalBlocks = (blocks: DynamicPortalBlock[]): DynamicPortalDataSection[] => {
+  const buckets = new Map<string, DynamicPortalDataSection>();
+  const visit = (items: DynamicPortalBlock[]) => items.forEach((block) => {
+    if (block.databaseRows) {
+      const sourceTitle = block.text || block.fields?.title || "Partner Portal — Brad";
+      const key = portalSectionKeyForSource(sourceTitle);
+      if (key) {
+        const current = buckets.get(key) ?? {
+          key,
+          title: sourceTitle,
+          description: "Live records sourced only from Partner Portal — Brad.",
+          sourceTitles: [],
+          rows: [],
+        };
+        current.sourceTitles = Array.from(new Set([...current.sourceTitles, sourceTitle]));
+        current.rows = uniquePortalRows([...current.rows, ...block.databaseRows]);
+        buckets.set(key, current);
+      }
+    }
+    if (block.children?.length) visit(block.children);
+  });
+  visit(blocks);
+  return Array.from(buckets.values());
+};
+
 const findPortalPageForUser = async (user: BlueprintUser) => {
   const fields = user.rawFields ?? {};
   const configuredPortalTitles = [
@@ -2146,6 +2182,33 @@ export async function getDynamicPortalForEmail(email: string): Promise<DynamicPo
   const user = await findApprovedPortalUser(email);
   if (!user) return null;
 
+  if (/brad gaubert|\bbrad\b/i.test(user.name)) {
+    const pageId = optionalEnv("NOTION_GODS_BLUEPRINT_PAGE_ID");
+    const data = await getBradAllData();
+    const section = (key: string, title: string, rows: typeof data.assets): DynamicPortalDataSection => ({
+      key, title, description: "Live relation-filtered records from God’s Blueprint CORE.", sourceTitles: [title],
+      rows: rows.map((row) => ({ id: row.id, title: row.title, fields: row.fields, sourceTitle: row.sourceTitle })),
+    });
+    const sections = [
+      section("assets", "05 — Assets — CORE", data.assets),
+      section("buy-box-signals", "06 — Buy Boxes & Mandates — CORE", data.buyBoxes),
+      section("investors", "04 — Investors, Buyers & Lenders — CORE", data.investors),
+      section("underwritten-assets", "07 — Underwriting Engine — CORE", data.underwriting),
+      section("active-matches", "08 — Matching Engine — CORE", data.visibleMatches),
+    ];
+    return {
+      title: "God’s Blueprint — Brad Gaubert",
+      pageId,
+      user,
+      blocks: [],
+      sections,
+      reviewRhythm: REVIEW_RHYTHM,
+      dashboardRules: DASHBOARD_RULES,
+      quickActions: QUICK_ACTIONS,
+      source: "notion",
+    };
+  }
+
   const portalPage = await findPortalPageForUser(user);
   if (!portalPage) {
     return {
@@ -2161,10 +2224,9 @@ export async function getDynamicPortalForEmail(email: string): Promise<DynamicPo
     };
   }
 
-  const [blocks, sections] = await Promise.all([
-    getDynamicBlocksForPage(portalPage.id, user),
-    getPortalDataSectionsForUser(user),
-  ]);
+  const blocks = await getDynamicBlocksForPage(portalPage.id, user);
+  const portalOnlySections = sectionsFromPortalBlocks(blocks);
+  const sections = portalOnlySections.length ? portalOnlySections : await getPortalDataSectionsForUser(user);
 
   return {
     title: portalPage.title,
@@ -2506,6 +2568,39 @@ export async function getGodBlueprintAdminSnapshot(): Promise<AdminBlueprintSnap
       blocks: modules.reduce((sum, module) => sum + module.blockCount, 0),
     },
   };
+}
+
+async function getGodBlueprintSectionsForUser(user: BlueprintUser): Promise<DynamicPortalDataSection[]> {
+  const pageId = requireEnv("NOTION_GODS_BLUEPRINT_PAGE_ID");
+  const rootBlocks = await getPageBlocks(pageId);
+  const children = rootBlocks.filter((block) => block.type === "child_page" || block.type === "child_database");
+  const modules = (await Promise.all(children.map((block, index) => blueprintModuleFromChildBlock(block, index))))
+    .filter((module): module is AdminBlueprintModule => Boolean(module));
+  const buckets = new Map<string, DynamicPortalDataSection>();
+
+  modules.forEach((module) => {
+    const key = portalSectionKeyForSource(`${module.title} ${module.category}`);
+    if (!key) return;
+    const rows = module.rows
+      .map((row) => ({ id: row.id, title: row.title, fields: row.fields, sourceTitle: module.title } satisfies PortalDatabaseRow))
+      // These databases are direct descendants of the configured God's
+      // Blueprint root and are already the authoritative Brad-owned modules.
+      // Relations often carry ownership without repeating Brad on every row,
+      // so applying rowBelongsToUser here incorrectly removes valid records.
+      .map((row) => ({ ...row, fields: sanitizePartnerFields(row.fields, user, module.title) }));
+    const current = buckets.get(key) ?? {
+      key,
+      title: module.title,
+      description: "Brad-scoped records fetched directly from God’s Blueprint.",
+      sourceTitles: [],
+      rows: [],
+    };
+    current.sourceTitles = Array.from(new Set([...current.sourceTitles, module.title]));
+    current.rows = uniquePortalRows([...current.rows, ...rows]);
+    buckets.set(key, current);
+  });
+
+  return Array.from(buckets.values());
 }
 
 const adminSourceTargets: Array<{ key: string; title: string; entityType: string; aliases: string[] }> = [
