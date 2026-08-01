@@ -1,0 +1,16 @@
+
+> sbf-world-os@1.0.0 dev
+> next dev
+
+  ▲ Next.js 14.2.35
+  - Local:        http://localhost:3001
+  - Environments: .env.local
+
+ ✓ Starting...
+ ✓ Ready in 2.6s
+ ✓ Compiled /api/deploy/health in 483ms (85 modules)
+ GET /api/deploy/health 200 in 709ms
+ ✓ Compiled in 8.3s (203 modules)
+ ✓ Compiled in 746ms (203 modules)
+ ✓ Compiled in 348ms (203 modules)
+ ✓ Compiled in 339ms (203 modules)
