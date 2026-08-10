@@ -614,7 +614,74 @@ const NEW_BUILD_ZONE_SOURCES = [
   ["15 — Pillar HQ Registry — CORE", "efb2afe99f864527872ce83e9968e1f7"],
 ] as const;
 
+const NEW_BUILD_ZONE_PAGE_ID = "3b481791bca08167a380c1b55aafbe4a";
+const NEW_BUILD_BRUCE_INVESTOR_PAGE_ID = "3b481791bca08110aa99e21d8d831d97";
+
 const newBuildZoneEnabled = () => Boolean(optionalEnv("NOTION_NEW_BUILD_ZONE_PAGE_ID"));
+
+const assertNewBuildZone = () => {
+  const configured = stripDashes(optionalEnv("NOTION_NEW_BUILD_ZONE_PAGE_ID")).toLowerCase();
+  if (configured !== NEW_BUILD_ZONE_PAGE_ID) {
+    throw new NotionConfigError("Portal reads require the canonical New Build Zone — 8/5/2026 page ID.");
+  }
+};
+
+const canonicalBradInvestorRows = async (): Promise<PortalDatabaseRow[]> => {
+  assertNewBuildZone();
+  const blocks = await getPageBlocks(NEW_BUILD_BRUCE_INVESTOR_PAGE_ID);
+  const lines = blocks.map(blockText).filter(Boolean);
+  const notion = getNotionClient();
+  const tables = blocks.filter((block) => block.type === "table");
+  const readTable = async (block: BlockObjectResponse | undefined) => {
+    if (!block) return [] as string[][];
+    const response = await notion.blocks.children.list({ block_id: block.id, page_size: 100 });
+    return response.results.flatMap((item) => {
+      if (!isFullBlock(item) || item.type !== "table_row") return [];
+      return [item.table_row.cells.map((cell) => plainText(cell))];
+    });
+  };
+  const [profileTable, buyBoxTable, matchesTable] = await Promise.all([
+    readTable(tables[0]), readTable(tables[1]), readTable(tables[2]),
+  ]);
+  const profile = Object.fromEntries(profileTable.slice(1).filter((row) => row[0]).map((row) => [row[0], row[1] ?? ""]));
+  const buyBox = Object.fromEntries(buyBoxTable.slice(1).filter((row) => row[0]).map((row) => [row[0], row[1] ?? ""]));
+  const matches = matchesTable.slice(1).filter((row) => row[0]).map((row, index) => ({
+    id: `new-build-bruce-match-${index + 1}`,
+    title: row[0],
+    fields: { "match score": row[1] ?? "", price: row[2] ?? "", units: row[3] ?? "", status: row[4] ?? "" },
+  }));
+  const valueAfter = (label: string) => {
+    const line = lines.find((item) => normalizeComparable(item).startsWith(normalizeComparable(label)));
+    return line?.slice(line.indexOf(":") + 1).trim() ?? "";
+  };
+  return [{
+    id: NEW_BUILD_BRUCE_INVESTOR_PAGE_ID,
+    title: "Bruce Edwards",
+    sourceTitle: "New Build Zone — Bruce Edwards Investor Portal (Canonical)",
+    fields: {
+      "investor name": "Bruce Edwards",
+      organization: profile.Organization || valueAfter("Organization") || "Eden Elevations 3",
+      status: valueAfter("Status") || "Active — Canonical Investor Portal",
+      lane: valueAfter("Lane") || "Investor Lane",
+      "registry id": profile["Registry ID"] || valueAfter("Registry ID") || "SBF-INV-INS-001",
+      "capital id": profile["Capital ID (CORE)"] || valueAfter("Capital ID") || "8",
+      email: profile.Email || "bruce@edenelevations3.com",
+      "capital role": profile["Capital Role"] || "Investor / Buyer — Institutional",
+      "capital capacity": profile["Capital Capacity"] || "$100,000,000",
+      "asset classes": profile["Asset Classes"] || "Multifamily",
+      "geographic focus": profile["Geographic Focus"] || "National USA — Sun Belt and Midwest",
+      "source partner": profile["Source Partner"] || "Brad Gaubert — Keaty Real Estate",
+      "buy box": valueAfter("Buy Box Name") || "Bruce Edwards Buy Box Tracker — Multifamily Acquisitions",
+      "buy box status": valueAfter("Status") || "Active — Match Ready",
+      "nda status": "Needed",
+      "proof of funds status": "Needed",
+      "portal access": "Locked pending activation checklist",
+      "canonical source page": NEW_BUILD_BRUCE_INVESTOR_PAGE_ID,
+      "buy box criteria": JSON.stringify(buyBox),
+      "active matches": JSON.stringify(matches),
+    },
+  }];
+};
 
 const newBuildSourceForTitle = (title: string) => {
   const requested = normalizeComparable(title);
@@ -3333,6 +3400,15 @@ const investorDataSourceId = async () => {
 
 export async function getInvestorManagerSnapshot(email: string): Promise<InvestorManagerSnapshot> {
   const user = await assertInvestorManagerAccess(email);
+  if (newBuildZoneEnabled()) {
+    return {
+      source: "notion",
+      sourceTitle: "New Build Zone — 8/5/2026 / Bruce Edwards Investor Portal (Canonical)",
+      dataSourceId: NEW_BUILD_BRUCE_INVESTOR_PAGE_ID,
+      fields: [],
+      rows: await canonicalBradInvestorRows(),
+    };
+  }
   const dataSourceId = await investorDataSourceId();
   const [dataSource, pages] = await Promise.all([
     retrieveDataSource(dataSourceId),
@@ -3361,6 +3437,9 @@ export async function getInvestorManagerSnapshot(email: string): Promise<Investo
 }
 
 export async function createInvestorManagerRecord(email: string, values: Record<string, string>) {
+  if (newBuildZoneEnabled()) {
+    throw new NotionConfigError("Investor creation is locked to the New Build Zone canonical workflow; legacy Investors CORE writes are disabled.");
+  }
   const user = await assertInvestorManagerAccess(email);
   const dataSourceId = await investorDataSourceId();
   const dataSource = await retrieveDataSource(dataSourceId);
@@ -3404,6 +3483,9 @@ export async function createInvestorManagerRecord(email: string, values: Record<
 }
 
 export async function archiveInvestorManagerRecord(email: string, rowId: string) {
+  if (newBuildZoneEnabled()) {
+    throw new NotionConfigError("Investor archiving is disabled for canonical New Build Zone investor pages.");
+  }
   const user = await assertInvestorManagerAccess(email);
   const notion = getNotionClient();
   const page = await notion.pages.retrieve({ page_id: rowId });

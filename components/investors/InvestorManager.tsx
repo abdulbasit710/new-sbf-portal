@@ -154,15 +154,14 @@ export default function InvestorManager() {
       <Card className="overflow-hidden border-gold/20">
         <CardHeader
           title="Investor Relationship Manager"
-          sub="Add and archive Brad-scoped investors using the live fields from 04 — Investors, Buyers & Lenders — CORE."
-          action={<Button onClick={() => setShowForm(true)} disabled={!snapshot || busy === "load"}>Add investor</Button>}
+          sub="Brad-scoped investors sourced only from 🏗️ New Build Zone — 8/5/2026."
         />
         <div className="p-5">
           <div className="rounded-2xl border border-white/[0.07] bg-black/20 p-4">
             <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
               <div>
                 <div className="text-sm font-medium text-chalk">Find an investor</div>
-                <p className="mt-1 text-xs text-muted">Search by investor name, contact, or organization. Records stay hidden until you search.</p>
+                <p className="mt-1 text-xs text-muted">Brad's complete investor list appears below. Search by investor name, contact, or organization.</p>
               </div>
               <div className="text-[11px] text-muted">{busy === "load" ? "Syncing with Notion…" : "Live God’s Blueprint lookup"}</div>
             </div>
@@ -199,11 +198,7 @@ export default function InvestorManager() {
                       ].filter(Boolean).join(" · ") || "Capital relationship"}
                     </p>
                   </div>
-                  <div className="shrink-0" onClick={(event) => event.stopPropagation()}>
-                  <Button variant="outline" disabled={busy === row.id} onClick={() => void archive(row)}>
-                    {busy === row.id ? "Archiving…" : "Archive"}
-                  </Button>
-                  </div>
+                  <div className="shrink-0 text-xs text-gold">View buy boxes and matches →</div>
                 </div>
               ))}
             </div>
@@ -231,7 +226,7 @@ export default function InvestorManager() {
         </form>
       </Modal>
 
-      <Modal open={Boolean(selected)} onClose={() => setSelected(null)} title={selected?.title || "Investor record"} sub="Live record from 04 — Investors, Buyers & Lenders — CORE" width="max-w-4xl">
+      <Modal open={Boolean(selected)} onClose={() => setSelected(null)} title={selected?.title || "Investor record"} sub="Live record from 🏗️ New Build Zone — 8/5/2026" width="max-w-4xl">
         {selected && <div className="grid max-h-[65vh] gap-3 overflow-y-auto md:grid-cols-2">{Object.entries(selected.fields).filter(([, value]) => Boolean(value)).map(([key, value]) => <div key={key} className="rounded-xl border border-white/[0.07] bg-black/20 p-4"><div className="text-xs text-muted">{key}</div><div className="mt-1 whitespace-pre-wrap break-words text-sm text-chalk">{value}</div></div>)}</div>}
       </Modal>
     </>
