@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
@@ -37,8 +37,30 @@ export default function Topbar({ title }: { title: string }) {
   const [openN, setOpenN] = useState(false);
   const [openU, setOpenU] = useState(false);
   const [notifications, setNotifications] = useState<PortalNotification[]>([]);
+  const notificationsRef = useRef<HTMLDivElement>(null);
+  const profileRef = useRef<HTMLDivElement>(null);
 
   const role = session?.role ?? "investor";
+
+  useEffect(() => {
+    const closeMenus = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (openN && !notificationsRef.current?.contains(target)) setOpenN(false);
+      if (openU && !profileRef.current?.contains(target)) setOpenU(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpenN(false);
+        setOpenU(false);
+      }
+    };
+    document.addEventListener("pointerdown", closeMenus);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeMenus);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [openN, openU]);
 
   useEffect(() => {
     if (!session?.email) {
@@ -47,7 +69,10 @@ export default function Topbar({ title }: { title: string }) {
     }
 
     let cancelled = false;
+    let loading = false;
     const load = async () => {
+      if (loading || document.hidden) return;
+      loading = true;
       try {
         if (session.role === "admin") {
           const response = await fetch(`/api/admin/crm?email=${encodeURIComponent(session.email)}&ts=${Date.now()}`, { cache: "no-store" });
@@ -57,7 +82,7 @@ export default function Topbar({ title }: { title: string }) {
             const adminItems = rows
               .filter((row: any) => {
                 const haystack = [row.title, row.status, row.route, row.entityType, row.sourceTitle, ...(row.fields ? Object.values(row.fields) : [])].join(" ").toLowerCase();
-                return ["full reveal", "lock request", "project lock", "pending", "new", "submitted", "matching request", "add to my matches", "needs docs", "in review", "admin review"].some((token) => haystack.includes(token));
+                return ["full reveal", "nda consent", "proof of funds", "lock request", "project lock", "pending", "new", "submitted", "matching request", "add to my matches", "needs docs", "in review", "admin review"].some((token) => haystack.includes(token));
               })
               .sort((a: any, b: any) => {
                 const priority = (row: any) => /add to my matches|matching request|submitted for review/i.test([row.title, row.status, row.route, ...(row.fields ? Object.values(row.fields) : [])].join(" ")) ? 1 : 0;
@@ -80,18 +105,20 @@ export default function Topbar({ title }: { title: string }) {
           return;
         }
 
-        const response = await fetch(`/api/notion/portal/notifications?email=${encodeURIComponent(session.email)}&ts=${Date.now()}`, { cache: "no-store" });
+        const response = await fetch(`/api/notion/portal/notifications?email=${encodeURIComponent(session.email)}`);
         const payload = await response.json();
         if (!cancelled && response.ok && payload.success) {
           setNotifications(Array.isArray(payload.data?.items) ? payload.data.items : []);
         }
       } catch {
         if (!cancelled) setNotifications([]);
+      } finally {
+        loading = false;
       }
     };
 
     void load();
-    const timer = window.setInterval(load, session.role === "admin" ? 30000 : 45000);
+    const timer = window.setInterval(load, session.role === "admin" ? 60_000 : 120_000);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
@@ -99,7 +126,7 @@ export default function Topbar({ title }: { title: string }) {
   }, [session?.email, session?.role]);
 
   return (
-    <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-white/[0.07] bg-[#050505]/78 px-6 shadow-[0_18px_60px_-48px_rgba(212,175,55,0.5)] backdrop-blur-2xl">
+    <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-white/[0.07] bg-[#070807]/95 px-3 shadow-[0_18px_60px_-48px_rgba(212,175,55,0.5)] backdrop-blur-2xl sm:px-5 lg:px-6">
       <div className="flex items-center gap-4">
         <SbfWorldBrand compact className="lg:hidden" />
         <div className="hidden h-10 w-px bg-white/[0.07] lg:block" />
@@ -108,7 +135,7 @@ export default function Topbar({ title }: { title: string }) {
           alt="SBF WORLD"
           className="hidden h-12 w-12 object-contain [filter:drop-shadow(0_0_5px_rgba(244,201,91,0.5))_drop-shadow(0_0_16px_rgba(212,175,55,0.24))] lg:block"
         />
-        <h1 className="text-lg font-medium tracking-tight text-chalk">
+        <h1 className="max-w-[45vw] truncate text-sm font-medium tracking-tight text-chalk sm:max-w-none sm:text-lg">
           {title}
         </h1>
         <span className="hidden items-center gap-1.5 rounded-full border border-emerald-400/20 bg-emerald-400/10 px-2.5 py-1 text-[11px] text-emerald-300 sm:flex">
@@ -131,7 +158,7 @@ export default function Topbar({ title }: { title: string }) {
         </div>
 
         {/* Notifications */}
-        <div className="relative">
+        <div ref={notificationsRef} className="relative">
           <button
             onClick={() => {
               setOpenN((v) => !v);
@@ -153,7 +180,7 @@ export default function Topbar({ title }: { title: string }) {
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: 8, scale: 0.97 }}
                 transition={{ duration: 0.2 }}
-                className="glass absolute right-0 mt-2 w-80 rounded-2xl p-2 shadow-glow"
+                className="absolute right-0 mt-2 max-h-[min(70vh,620px)] w-[min(22rem,calc(100vw-1rem))] overflow-y-auto rounded-2xl border border-gold/25 bg-[#0b0c0b] p-2 shadow-[0_24px_80px_rgba(0,0,0,0.85)]"
               >
                 <div className="px-3 py-2 label-mono text-muted">
                   {session?.role === "admin" ? "Admin Approval Alerts" : "SBF WORLD Notifications"}
@@ -184,7 +211,7 @@ export default function Topbar({ title }: { title: string }) {
         </div>
 
         {/* User */}
-        <div className="relative">
+        <div ref={profileRef} className="relative">
           <button
             onClick={() => {
               setOpenU((v) => !v);
@@ -209,7 +236,7 @@ export default function Topbar({ title }: { title: string }) {
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: 8, scale: 0.97 }}
                 transition={{ duration: 0.2 }}
-                className="glass absolute right-0 mt-2 w-56 rounded-2xl p-2 shadow-glow"
+                className="absolute right-0 mt-2 w-[min(15rem,calc(100vw-1rem))] rounded-2xl border border-gold/25 bg-[#0b0c0b] p-2 shadow-[0_24px_80px_rgba(0,0,0,0.85)]"
               >
                 <div className="border-b border-white/[0.06] px-3 py-3">
                   <div className="flex items-center gap-3">

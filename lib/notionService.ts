@@ -11,7 +11,7 @@ import {
   type BlueprintModuleKey,
 } from "./blueprintRegistry";
 import type { Role } from "./types";
-import { getBradAllData } from "./bradPortal";
+import { isCompleteNewBuildAsset } from "./assetCompleteness";
 
 export interface GoldEmblemData {
   title: string;
@@ -58,6 +58,7 @@ export interface BlueprintUser {
   verificationStatus?: string;
   passwordHint?: string;
   rawFields?: Record<string, string>;
+  ownershipIds?: string[];
   source: "notion" | "fallback";
 }
 
@@ -139,6 +140,7 @@ export class NotionConfigError extends Error {
 const NOTION_ENV_KEYS = [
   "NOTION_API_KEY",
   "NOTION_GODS_BLUEPRINT_PAGE_ID",
+  "NOTION_NEW_BUILD_ZONE_PAGE_ID",
   "NOTION_SITE_CONTENT_DATA_SOURCE_ID",
   "NOTION_PORTAL_USERS_DATA_SOURCE_ID",
   "NOTION_PEOPLE_DATA_SOURCE_ID",
@@ -177,6 +179,10 @@ const requireEnv = (key: NotionEnvKey) => {
 const getNotionClient = () =>
   new Client({
     auth: requireEnv("NOTION_API_KEY"),
+    // A portal request reads several independent CORE sources. Do not let one
+    // unreachable source hold the entire dashboard open for minutes.
+    timeoutMs: 12_000,
+    retry: false,
   });
 
 const isFullBlock = (
@@ -448,7 +454,7 @@ export async function getPageBlocks(pageId = requireEnv("NOTION_GODS_BLUEPRINT_P
   }
 }
 
-async function getDatabaseRows(databaseId: string) {
+async function queryDatabaseRows(databaseId: string) {
   const notion = getNotionClient();
   const rows: PageObjectResponse[] = [];
   let cursor: string | undefined;
@@ -469,6 +475,44 @@ async function getDatabaseRows(databaseId: string) {
   } catch (error) {
     throw new NotionConfigError(notionErrorMessage(error, `Notion data source ${databaseId} read`));
   }
+}
+
+const DATABASE_CACHE_TTL_MS = 120_000;
+const DATABASE_STALE_TTL_MS = 15 * 60_000;
+const databaseRowsCache = new Map<string, { fetchedAt: number; rows: PageObjectResponse[] }>();
+const pendingDatabaseRows = new Map<string, Promise<PageObjectResponse[]>>();
+let notionReadQueue: Promise<void> = Promise.resolve();
+
+const queueNotionRead = <T>(task: () => Promise<T>) => {
+  const run = notionReadQueue.catch(() => undefined).then(task);
+  notionReadQueue = run.then(
+    () => new Promise<void>((resolve) => setTimeout(resolve, 350)),
+    () => new Promise<void>((resolve) => setTimeout(resolve, 350)),
+  );
+  return run;
+};
+
+async function getDatabaseRows(databaseId: string) {
+  const key = stripDashes(databaseId).toLowerCase();
+  const cached = databaseRowsCache.get(key);
+  if (cached && Date.now() - cached.fetchedAt < DATABASE_CACHE_TTL_MS) return cached.rows;
+
+  const pending = pendingDatabaseRows.get(key);
+  if (pending) return pending;
+
+  const request = queueNotionRead(() => queryDatabaseRows(databaseId))
+    .then((rows) => {
+      databaseRowsCache.set(key, { rows, fetchedAt: Date.now() });
+      return rows;
+    })
+    .catch((error) => {
+      if (cached && Date.now() - cached.fetchedAt < DATABASE_STALE_TTL_MS) return cached.rows;
+      throw error;
+    })
+    .finally(() => pendingDatabaseRows.delete(key));
+
+  pendingDatabaseRows.set(key, request);
+  return request;
 }
 
 type NotionSearchResult = {
@@ -547,9 +591,49 @@ const notionSearch = async (query: string) => {
 
 const stripDashes = (id: string) => id.replaceAll("-", "");
 
+// Canonical data sources physically contained in
+// 🏗️ New Build Zone — 8/5/2026 > 📖 God's Blueprint — CORE (Canonical).
+// When the New Build Zone is enabled, portal reads must resolve through this
+// allowlist and never through workspace-wide Notion search.
+const NEW_BUILD_ZONE_SOURCES = [
+  ["01 — Universal Intake — CORE", "a9dfefb30c674202b9898e08eb63a9b2"],
+  ["02 — People, Members & Relationships — CORE", "c8ba436c18f54b4cb5dea2928c0d35e4"],
+  ["03 — Partner Registry — CORE", "aba387de21e048b997b81ddb07e39e56"],
+  ["04 — Investors, Buyers & Lenders — CORE", "3618e8adb5c8429988e9eebc6a0dab8d"],
+  ["05 — Assets — CORE", "8ea99c20c7ce4dd9bcedad6a7b298938"],
+  ["06 — Buy Boxes & Mandates — CORE", "97989f38e52246658ba14061a3927ab5"],
+  ["07 — Underwriting Engine — CORE", "2bde0de3f8534aa8a46a7b7ff30be265"],
+  ["08 — Matching Engine — CORE", "5d712f567d924e4888c05c2b3e9f456d"],
+  ["09 — Vault & Controlled Reveal — CORE", "03a6b7a7f8014f92923b3e469b036690"],
+  ["10 — Deals, LOI, PSA & Closing — CORE", "0063ee4d849d4d3baebd4363e8fe8aeb"],
+  ["11 — Documents & Governance — CORE", "30cc5b53dffe4c37a4c4173c7bcf91db"],
+  ["12 — Partner Submissions — CORE", "8d10e359f6d94a78aa1ee9667bdc5f19"],
+  ["12 — Events & Member Access — CORE", "4930c7f86a584a6a94a69fd63a231b25"],
+  ["13 — Payments, Revenue & Payouts — CORE", "1f59ebdde41e4288a1e561375943ea80"],
+  ["14 — Cigar Products, Inventory & Orders — CORE", "4b56fb967b0e4f408cdd631263af5fd5"],
+  ["15 — Pillar HQ Registry — CORE", "efb2afe99f864527872ce83e9968e1f7"],
+] as const;
+
+const newBuildZoneEnabled = () => Boolean(optionalEnv("NOTION_NEW_BUILD_ZONE_PAGE_ID"));
+
+const newBuildSourceForTitle = (title: string) => {
+  const requested = normalizeComparable(title);
+  const scored = NEW_BUILD_ZONE_SOURCES.map(([sourceTitle, id]) => {
+    const canonical = normalizeComparable(sourceTitle);
+    let score = canonical === requested ? 100 : 0;
+    if (requested.includes(canonical) || canonical.includes(requested)) score += 50;
+    requested.split(" ").forEach((word) => {
+      if (word.length > 3 && canonical.includes(word)) score += 2;
+    });
+    return { id, score };
+  }).sort((a, b) => b.score - a.score);
+  return scored[0]?.score > 3 ? scored[0].id : "";
+};
+
 let portalUsersDataSourceIdPromise: Promise<string> | null = null;
 
 const getPortalUsersDataSourceId = async () => {
+  if (newBuildZoneEnabled()) return "";
   const configured = optionalEnv("NOTION_PORTAL_USERS_DATA_SOURCE_ID");
   if (configured) return configured;
 
@@ -582,6 +666,7 @@ const getPortalUsersDataSourceId = async () => {
 let peopleDataSourceIdPromise: Promise<string> | null = null;
 
 const getPeopleDataSourceId = async () => {
+  if (newBuildZoneEnabled()) return newBuildSourceForTitle("02 — People, Members & Relationships — CORE");
   const configured = optionalEnv("NOTION_PEOPLE_DATA_SOURCE_ID");
   if (configured) return configured;
 
@@ -639,6 +724,7 @@ const getPeopleDataSourceId = async () => {
 let partnerSubmissionsDataSourceIdPromise: Promise<string> | null = null;
 
 const getPartnerSubmissionsDataSourceId = async () => {
+  if (newBuildZoneEnabled()) return newBuildSourceForTitle("12 — Partner Submissions — CORE");
   const configured = optionalEnv("NOTION_PARTNER_SUBMISSIONS_DATA_SOURCE_ID");
   if (configured && !/^(auto|discover|search|none|null)$/i.test(configured)) return configured;
 
@@ -917,6 +1003,30 @@ export async function getPortalUsersFromDataSource(): Promise<BlueprintUser[]> {
     .filter((user): user is BlueprintUser => Boolean(user));
 }
 
+const attachNewBuildOwnershipIds = async (user: BlueprintUser): Promise<BlueprintUser> => {
+  if (!newBuildZoneEnabled() || user.role === "admin") return user;
+  // Only Partner Registry rows represent ownership identities. Investor rows may
+  // mention a partner in notes/relationships, but their page IDs must never be
+  // treated as partner owner IDs or unrelated assets will leak into the scope.
+  const sourceTitles = ["03 — Partner Registry — CORE"];
+  const settled = await Promise.allSettled(
+    sourceTitles.map((title) => getDatabaseRows(newBuildSourceForTitle(title))),
+  );
+  const email = normalizeComparable(user.email);
+  const name = normalizeComparable(user.name);
+  const ownershipIds = settled.flatMap((result) =>
+    result.status === "fulfilled"
+      ? result.value
+          .filter((page) => {
+            const text = normalizeComparable(fieldsToLine(pageProperties(page)));
+            return (email && text.includes(email)) || (name && text.includes(name));
+          })
+          .map((page) => page.id)
+      : [],
+  );
+  return { ...user, ownershipIds };
+};
+
 export async function getBlueprintUsers(): Promise<BlueprintUser[]> {
   const userModules = BLUEPRINT_MODULES.filter((module) =>
     ["people-members-relationships", "partner-registry", "investors-buyers-lenders"].includes(module.key),
@@ -1061,7 +1171,7 @@ export async function findApprovedPortalUser(email: string, requestedRole?: Role
     ? activeMatches.find((candidate) => candidate.role === requestedRole)
     : undefined;
 
-  return exactRoleMatch ?? activeMatches[0];
+  return attachNewBuildOwnershipIds(exactRoleMatch ?? activeMatches[0]);
 }
 
 export async function authenticateBlueprintUser(email: string, password?: string, requestedRole?: Role) {
@@ -1166,6 +1276,7 @@ const allSharedSearchResults = async () => {
 const resolveDataSourceIdByTitle = async (title: string) => {
   const normalizedTitle = normalizeComparable(title);
   if (!normalizedTitle) return "";
+  if (newBuildZoneEnabled()) return newBuildSourceForTitle(title);
 
   const results = [
     ...(await notionSearch(title).catch(() => [])),
@@ -1376,7 +1487,22 @@ const findPortalPageForUser = async (user: BlueprintUser) => {
 
 
 const identityTokensForUser = (user: BlueprintUser) =>
-  [user.email, user.name, firstNameOf(user.name), user.contactId, user.id]
+  [
+    user.email,
+    user.name,
+    firstNameOf(user.name),
+    user.contactId,
+    user.id,
+    ...(user.ownershipIds ?? []),
+    getField(user.rawFields ?? {}, [
+      "partner registry",
+      "partner profile",
+      "related partner",
+      "partner relation",
+      "investor registry",
+      "lender registry",
+    ]),
+  ]
     .filter(Boolean)
     .map((item) => normalizeComparable(String(item)))
     .filter((item) => item.length >= 2);
@@ -1391,10 +1517,7 @@ const rowTextForScope = (fields: Record<string, string>) => normalizeComparable(
 const rowBelongsToUser = (fields: Record<string, string>, user: BlueprintUser, sourceTitle = "") => {
   if (sourceTitleIsUserScoped(sourceTitle, user)) return true;
 
-  const rowText = rowTextForScope(fields);
   const tokens = identityTokensForUser(user);
-  if (tokens.some((token) => token.length >= 3 && rowText.includes(token))) return true;
-
   const ownershipFields = getField(fields, [
     "partner",
     "partner name",
@@ -1418,6 +1541,12 @@ const rowBelongsToUser = (fields: Record<string, string>, user: BlueprintUser, s
     "contact id",
     "email",
   ]);
+
+  const compactOwnership = stripDashes(ownershipFields).toLowerCase();
+  const ownershipIds = [user.id, ...(user.ownershipIds ?? [])]
+    .map((id) => stripDashes(id).toLowerCase())
+    .filter(Boolean);
+  if (ownershipIds.some((id) => compactOwnership.includes(id))) return true;
 
   const normalizedOwnership = normalizeComparable(ownershipFields);
   return tokens.some((token) => token.length >= 3 && normalizedOwnership.includes(token));
@@ -1532,8 +1661,8 @@ const toPortalRows = (
         sourceTitle,
       } satisfies PortalDatabaseRow;
     })
-    .filter((row) => (forceUserScope ? rowBelongsToUser(row.fields, user, sourceTitle) : true))
-    .filter((row) => isPartnerVisibleRow(row.fields, user, sourceTitle))
+    .filter((row) => user.role === "admin" || !forceUserScope || rowBelongsToUser(row.fields, user, sourceTitle))
+    .filter((row) => user.role === "admin" || isPartnerVisibleRow(row.fields, user, sourceTitle))
     .map((row) => ({
       ...row,
       fields: sanitizePartnerFields(row.fields, user, sourceTitle),
@@ -1541,13 +1670,14 @@ const toPortalRows = (
     .filter((row) => Object.keys(row.fields).length > 0);
 
 const uniquePortalRows = (rows: PortalDatabaseRow[]) => {
-  const seen = new Set<string>();
+  const seenIds = new Set<string>();
   return rows.filter((row) => {
     // Title aliases can resolve to the same Notion data source. The returned
     // page ID is the stable identity, so count it only once across aliases.
     const key = stripDashes(row.id);
-    if (seen.has(key)) return false;
-    seen.add(key);
+    if (seenIds.has(key)) return false;
+    seenIds.add(key);
+
     return true;
   });
 };
@@ -2069,8 +2199,10 @@ const buildSubmissionPropertiesForSchema = (
   return properties;
 };
 
-export async function createPartnerPortalSubmission(email: string, input: PartnerPortalSubmissionInput): Promise<PartnerPortalSubmissionResult> {
-  const user = await findApprovedPortalUser(email);
+export async function createPartnerPortalSubmission(email: string, input: PartnerPortalSubmissionInput, authenticatedUser?: BlueprintUser): Promise<PartnerPortalSubmissionResult> {
+  const user = authenticatedUser?.email.toLowerCase() === email.trim().toLowerCase()
+    ? authenticatedUser
+    : await findApprovedPortalUser(email);
   if (!user) {
     throw new NotionConfigError("No active Notion user found for this submission email.");
   }
@@ -2182,74 +2314,18 @@ export async function getDynamicPortalForEmail(email: string): Promise<DynamicPo
   const user = await findApprovedPortalUser(email);
   if (!user) return null;
 
-  if (/brad gaubert|\bbrad\b/i.test(user.name)) {
-    const pageId = optionalEnv("NOTION_GODS_BLUEPRINT_PAGE_ID");
-    const data = await getBradAllData();
-    const section = (key: string, title: string, rows: typeof data.assets): DynamicPortalDataSection => ({
-      key, title, description: "Live relation-filtered records from God’s Blueprint CORE.", sourceTitles: [title],
-      rows: rows.map((row) => ({ id: row.id, title: row.title, fields: row.fields, sourceTitle: row.sourceTitle })),
-    });
-    const sections = [
-      section("assets", "05 — Assets — CORE", data.assets),
-      section("buy-box-signals", "06 — Buy Boxes & Mandates — CORE", data.buyBoxes),
-      section("investors", "04 — Investors, Buyers & Lenders — CORE", data.investors),
-      section("underwritten-assets", "07 — Underwriting Engine — CORE", data.underwriting),
-      section("active-matches", "08 — Matching Engine — CORE", data.visibleMatches),
-    ];
-    return {
-      title: "God’s Blueprint — Brad Gaubert",
-      pageId,
-      user,
-      blocks: [],
-      sections,
-      reviewRhythm: REVIEW_RHYTHM,
-      dashboardRules: DASHBOARD_RULES,
-      quickActions: QUICK_ACTIONS,
-      source: "notion",
-    };
-  }
+  return getDynamicPortalForAuthenticatedUser(user);
+}
 
-  const portalPage = await findPortalPageForUser(user);
-  if (!portalPage) {
-    return {
-      title: `${rolePortalTitle(user.role)} Portal — ${firstNameOf(user.name)}`,
-      pageId: "",
-      user,
-      blocks: [],
-      sections: await getPortalDataSectionsForUser(user),
-      reviewRhythm: REVIEW_RHYTHM,
-      dashboardRules: DASHBOARD_RULES,
-      quickActions: QUICK_ACTIONS,
-      source: "notion",
-    };
-  }
-
-  const blocks = await getDynamicBlocksForPage(portalPage.id, user);
-  const portalOnlySections = sectionsFromPortalBlocks(blocks);
-  const coreSections = await getPortalDataSectionsForUser(user);
-  const sectionMap = new Map<string, DynamicPortalDataSection>();
-  [...portalOnlySections, ...coreSections].forEach((candidate) => {
-    const current = sectionMap.get(candidate.key);
-    if (!current) {
-      sectionMap.set(candidate.key, candidate);
-      return;
-    }
-    sectionMap.set(candidate.key, {
-      ...current,
-      title: current.title || candidate.title,
-      description: current.description || candidate.description,
-      sourceTitles: Array.from(new Set([...current.sourceTitles, ...candidate.sourceTitles])),
-      rows: uniquePortalRows([...current.rows, ...candidate.rows]),
-    });
-  });
-  const sections = Array.from(sectionMap.values());
+export async function getDynamicPortalForAuthenticatedUser(user: BlueprintUser): Promise<DynamicPortalPage> {
+  const scopedUser = await attachNewBuildOwnershipIds(user);
 
   return {
-    title: portalPage.title,
-    pageId: portalPage.id,
-    user,
-    blocks,
-    sections,
+    title: `${rolePortalTitle(scopedUser.role)} Portal — ${firstNameOf(scopedUser.name)}`,
+    pageId: optionalEnv("NOTION_NEW_BUILD_ZONE_PAGE_ID"),
+    user: scopedUser,
+    blocks: [],
+    sections: await getGodBlueprintSectionsForUser(scopedUser),
     reviewRhythm: REVIEW_RHYTHM,
     dashboardRules: DASHBOARD_RULES,
     quickActions: QUICK_ACTIONS,
@@ -2278,7 +2354,7 @@ export async function getPortalNotificationsForEmail(email: string): Promise<Por
   const user = await findApprovedPortalUser(email);
   if (!user) return [];
 
-  const sections = await getPortalDataSectionsForUser(user).catch(() => []);
+  const sections = await getGodBlueprintSectionsForUser(user).catch(() => []);
   const sectionRows = sections.flatMap((section) => section.rows);
 
   // Always read Partner Submissions — CORE directly as well. The notification bell must not depend
@@ -2549,7 +2625,7 @@ const searchBlueprintModuleByTitle = async (title: string, index: number): Promi
 };
 
 export async function getGodBlueprintAdminSnapshot(): Promise<AdminBlueprintSnapshot> {
-  const pageId = requireEnv("NOTION_GODS_BLUEPRINT_PAGE_ID");
+  const pageId = optionalEnv("NOTION_NEW_BUILD_ZONE_PAGE_ID") || requireEnv("NOTION_GODS_BLUEPRINT_PAGE_ID");
   const notion = getNotionClient();
   const rootPage = await notion.pages.retrieve({ page_id: pageId }).catch(() => null);
   const rootTitle = rootPage && isPageObject(rootPage) ? titleFromPageObject(rootPage) : "God’s Blueprint";
@@ -2587,36 +2663,189 @@ export async function getGodBlueprintAdminSnapshot(): Promise<AdminBlueprintSnap
 }
 
 async function getGodBlueprintSectionsForUser(user: BlueprintUser): Promise<DynamicPortalDataSection[]> {
-  const pageId = requireEnv("NOTION_GODS_BLUEPRINT_PAGE_ID");
-  const rootBlocks = await getPageBlocks(pageId);
-  const children = rootBlocks.filter((block) => block.type === "child_page" || block.type === "child_database");
-  const modules = (await Promise.all(children.map((block, index) => blueprintModuleFromChildBlock(block, index))))
-    .filter((module): module is AdminBlueprintModule => Boolean(module));
-  const buckets = new Map<string, DynamicPortalDataSection>();
+  if (!newBuildZoneEnabled()) {
+    throw new NotionConfigError("NOTION_NEW_BUILD_ZONE_PAGE_ID is required. Legacy Notion sources are disabled.");
+  }
 
-  modules.forEach((module) => {
-    const key = portalSectionKeyForSource(`${module.title} ${module.category}`);
-    if (!key) return;
-    const rows = module.rows
-      .map((row) => ({ id: row.id, title: row.title, fields: row.fields, sourceTitle: module.title } satisfies PortalDatabaseRow))
-      // These databases are direct descendants of the configured God's
-      // Blueprint root and are already the authoritative Brad-owned modules.
-      // Relations often carry ownership without repeating Brad on every row,
-      // so applying rowBelongsToUser here incorrectly removes valid records.
-      .map((row) => ({ ...row, fields: sanitizePartnerFields(row.fields, user, module.title) }));
-    const current = buckets.get(key) ?? {
-      key,
-      title: module.title,
-      description: "Brad-scoped records fetched directly from God’s Blueprint.",
-      sourceTitles: [],
-      rows: [],
-    };
-    current.sourceTitles = Array.from(new Set([...current.sourceTitles, module.title]));
-    current.rows = uniquePortalRows([...current.rows, ...rows]);
-    buckets.set(key, current);
+  const definitions = [
+    { key: "assets", title: "05 — Assets — CORE" },
+    { key: "buy-box-signals", title: "06 — Buy Boxes & Mandates — CORE" },
+    { key: "investors", title: "04 — Investors, Buyers & Lenders — CORE" },
+    { key: "active-matches", title: "08 — Matching Engine — CORE" },
+    { key: "submissions", title: "12 — Partner Submissions — CORE" },
+    { key: "documents", title: "11 — Documents & Governance — CORE" },
+  ] as const;
+
+  const assetDataSourceId = newBuildSourceForTitle("05 — Assets — CORE");
+  const assetPages = await getDatabaseRows(assetDataSourceId);
+  const userOwnerIds = [user.id, ...(user.ownershipIds ?? [])]
+    .map((id) => stripDashes(id).toLowerCase())
+    .filter(Boolean);
+  const explicitlyOwned = (fields: Record<string, string>) => {
+    const ownership = stripDashes(getField(fields, [
+      "source partner", "owner partner", "related partner", "assigned partner", "owner", "related investor", "related lender",
+    ])).toLowerCase();
+    return user.role === "admin" || userOwnerIds.some((id) => ownership.includes(id));
+  };
+
+  const sections = (await Promise.all(definitions.map(async ({ key, title }): Promise<DynamicPortalDataSection | null> => {
+    try {
+      const dataSourceId = newBuildSourceForTitle(title);
+      if (!dataSourceId) throw new NotionConfigError(`${title} is missing from the New Build Zone source manifest.`);
+      const pages = key === "assets" ? assetPages : await getDatabaseRows(dataSourceId);
+      const rows = key === "assets"
+        ? pages
+            .map((page) => {
+              const fields = pageProperties(page);
+              return { id: page.id, title: titleFromFields(fields), fields, sourceTitle: title } satisfies PortalDatabaseRow;
+            })
+            .filter((row) => explicitlyOwned(row.fields))
+            .map((row) => ({ ...row, fields: sanitizePartnerFields(row.fields, user, title) }))
+        : toPortalRows(pages, title, user, true).filter((row) =>
+            ["buy-box-signals", "investors", "underwritten-assets", "active-matches"].includes(key)
+              ? explicitlyOwned(row.fields)
+              : true,
+          );
+      return {
+        key,
+        title,
+        description: `Owner-scoped records fetched only from New Build Zone — 8/5/2026 for ${user.name}.`,
+        sourceTitles: [title],
+        rows: uniquePortalRows(rows),
+      } satisfies DynamicPortalDataSection;
+    } catch (error) {
+      console.error(`Portal section ${title} could not be loaded`, error);
+      return null;
+    }
+  }))).filter((section): section is DynamicPortalDataSection => section !== null);
+
+  const completeAssets = assetPages
+    .map((page) => {
+      const fields = pageProperties(page);
+      return { id: page.id, title: titleFromFields(fields), fields, sourceTitle: "05 — Assets — CORE" } satisfies PortalDatabaseRow;
+    })
+    .filter((row) => isCompleteNewBuildAsset(row.fields))
+    .filter((row) => explicitlyOwned(row.fields))
+    .filter((row) => isPartnerVisibleRow(row.fields, user, "05 — Assets — CORE"))
+    .map((row) => ({ ...row, fields: sanitizePartnerFields(row.fields, user, "05 — Assets — CORE") }));
+  sections.push({
+    key: "complete-assets",
+    title: "Complete Assets",
+    description: "Founder-approved and portal-visible assets passing every New Build Zone completion requirement.",
+    sourceTitles: ["05 — Assets — CORE"],
+    rows: completeAssets,
   });
 
-  return Array.from(buckets.values());
+  // Expose only NDA-gated metadata/counts in the ordinary portal payload. Full
+  // underwriting fields are returned exclusively by getFullUnderwritingForMatch
+  // after consent has been recorded by the deal-workflow endpoint.
+  const underwritingPages = await getDatabaseRows(newBuildSourceForTitle("07 — Underwriting Engine — CORE")).catch(() => []);
+  const underwritingByAssetId = new Map<string, { page: PageObjectResponse; fields: Record<string, string> }>();
+  underwritingPages.forEach((page) => {
+    const fields = pageProperties(page);
+    const relations = stripDashes(getField(fields, ["Related Asset", "Asset", "Related Assets"])).toLowerCase();
+    completeAssets.forEach((asset) => {
+      if (relations.includes(stripDashes(asset.id).toLowerCase()) && !underwritingByAssetId.has(asset.id)) {
+        underwritingByAssetId.set(asset.id, { page, fields });
+      }
+    });
+  });
+  const protectedUnderwritingRows = completeAssets.map((asset) => {
+    const linked = underwritingByAssetId.get(asset.id);
+    return {
+      id: linked?.page.id || `nda-gated-${asset.id}`,
+      title: getField(asset.fields, ["Asset Name", "Property Name", "Name"]) || asset.title,
+      sourceTitle: "07 — Underwriting Engine — CORE",
+      fields: {
+        status: linked ? getField(linked.fields, ["Status"]) || "Complete" : "Complete — relation pending",
+        "underwriting type": linked ? getField(linked.fields, ["Underwriting Type"]) : getField(asset.fields, ["Asset Type"]),
+        access: "NDA required — open the related match to consent and view",
+      },
+    } satisfies PortalDatabaseRow;
+  });
+  sections.push({
+    key: "underwritten-assets",
+    title: "07 — Underwriting Engine — CORE",
+    description: "NDA-gated underwriting packages related to Brad's 15 canonical complete assets. Protected fields are excluded from this payload.",
+    sourceTitles: ["07 — Underwriting Engine — CORE"],
+    rows: protectedUnderwritingRows,
+  });
+
+  const assets = completeAssets;
+  const completeAssetIds = new Set(
+    assets.filter((row) => isCompleteNewBuildAsset(row.fields)).map((row) => stripDashes(row.id).toLowerCase()),
+  );
+  const matches = sections.find((section) => section.key === "active-matches");
+  if (matches) {
+    matches.rows = matches.rows.filter((row) => {
+      const relationText = stripDashes(Object.values(row.fields).join(" ")).toLowerCase();
+      return Array.from(completeAssetIds).some((id) => relationText.includes(id));
+    });
+  }
+
+  return sections;
+}
+
+export async function getFullUnderwritingForMatch(
+  user: BlueprintUser,
+  matchId: string,
+): Promise<PortalDatabaseRow[]> {
+  const scopedUser = await attachNewBuildOwnershipIds(user);
+  const notion = getNotionClient();
+  const match = await notion.pages.retrieve({ page_id: matchId });
+  if (!isPageObject(match)) throw new NotionConfigError("The selected match could not be found.");
+
+  const matchFields = pageProperties(match);
+  if (scopedUser.role !== "admin" && !rowBelongsToUser(matchFields, scopedUser, "08 — Matching Engine — CORE")) {
+    throw new NotionConfigError("This match is not assigned to the current portal user.");
+  }
+
+  const underwritingId = newBuildSourceForTitle("07 — Underwriting Engine — CORE");
+  const pages = await getDatabaseRows(underwritingId);
+  const matchTitle = titleFromFields(matchFields);
+  const relationIds = `${matchId} ${Object.values(matchFields).join(" ")}`
+    .match(/[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}/gi) ?? [];
+  const tokens = [matchId, ...relationIds, matchTitle]
+    .map((value) => normalizeComparable(stripDashes(value)))
+    .filter((value) => value.length >= 8);
+
+  return pages
+    .map((page) => {
+      const fields = pageProperties(page);
+      return {
+        id: page.id,
+        title: titleFromFields(fields),
+        fields: Object.fromEntries(
+          Object.entries(fields).filter(([key]) => !/password|secret|token|private key|bank account|wire|ssn|tax id/i.test(key)),
+        ),
+        sourceTitle: "07 — Underwriting Engine — CORE",
+      } satisfies PortalDatabaseRow;
+    })
+    .filter((row) => {
+      const haystack = normalizeComparable(stripDashes(`${row.id} ${row.title} ${Object.values(row.fields).join(" ")}`));
+      return tokens.some((token) => haystack.includes(token));
+    });
+}
+
+export async function getProofOfFundsApprovalForMatch(user: BlueprintUser, matchId: string) {
+  const databaseId = await getPartnerSubmissionsDataSourceId();
+  const pages = await getDatabaseRows(databaseId);
+  const email = normalizeComparable(user.email);
+  const targetId = stripDashes(matchId).toLowerCase();
+  const records = pages
+    .map((page) => ({ id: page.id, fields: pageProperties(page) }))
+    .filter(({ fields }) => {
+      const text = stripDashes(Object.values(fields).join(" ")).toLowerCase();
+      return text.includes(targetId) && normalizeComparable(Object.values(fields).join(" ")).includes(email) && /proof of funds|proof-of-funds|pof/i.test(Object.values(fields).join(" "));
+    });
+  const latest = records.at(-1);
+  const status = latest ? getField(latest.fields, ["admin decision", "approval decision", "status", "review status", "proof of funds status"]) : "Not submitted";
+  return {
+    submitted: Boolean(latest),
+    approved: /approved|verified|cleared|accepted/i.test(status) && !/pending|submitted|review/i.test(status),
+    status,
+    recordId: latest?.id || "",
+  };
 }
 
 const adminSourceTargets: Array<{ key: string; title: string; entityType: string; aliases: string[] }> = [
@@ -3169,6 +3398,8 @@ export async function createInvestorManagerRecord(email: string, values: Record<
     ],
   });
 
+  databaseRowsCache.delete(stripDashes(dataSourceId).toLowerCase());
+
   return { id: response.id, source: "notion" as const };
 }
 
@@ -3184,6 +3415,7 @@ export async function archiveInvestorManagerRecord(email: string, rowId: string)
   }
 
   await notion.pages.update({ page_id: rowId, archived: true });
+  databaseRowsCache.delete(stripDashes(await investorDataSourceId()).toLowerCase());
   return { id: rowId, archived: true, source: "notion" as const };
 }
 
@@ -3262,6 +3494,11 @@ export async function createBradMatchRecord(
 
   const buyBoxFields = pageProperties(buyBoxPage);
   const assetFields = pageProperties(assetPage);
+  if (!isCompleteNewBuildAsset(assetFields)) {
+    throw new NotionConfigError(
+      "This asset is incomplete in New Build Zone and cannot enter the matching engine.",
+    );
+  }
   if (
     user.role !== "admin" &&
     (!rowBelongsToUser(buyBoxFields, user, "06 — Buy Boxes & Mandates — CORE") ||

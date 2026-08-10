@@ -81,7 +81,7 @@ export default function InvestorManager() {
     setBusy("load");
     setError("");
     try {
-      const response = await fetch(`/api/notion/investors?email=${encodeURIComponent(session.email)}&ts=${Date.now()}`, { cache: "no-store" });
+      const response = await fetch(`/api/notion/investors?email=${encodeURIComponent(session.email)}`);
       const payload = await response.json();
       if (!response.ok || !payload.success) throw new Error(payload.error || "Unable to load investors.");
       setSnapshot(payload.data as InvestorManagerSnapshot);
@@ -96,10 +96,10 @@ export default function InvestorManager() {
 
   const rows = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    if (needle.length < 2) return [];
+    if (needle.length < 2) return snapshot?.rows ?? [];
     return (snapshot?.rows ?? []).filter((row) =>
       [row.title, ...Object.values(row.fields)].join(" ").toLowerCase().includes(needle),
-    ).slice(0, 8);
+    );
   }, [query, snapshot?.rows]);
 
   const save = async (event: React.FormEvent) => {
@@ -177,13 +177,13 @@ export default function InvestorManager() {
           {notice && <div className="mt-3 rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-3 text-sm text-emerald-100">{notice}</div>}
           {error && <div className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{error}</div>}
 
-          {query.trim().length >= 2 && (
+          {snapshot && (
             <div className="mt-4 overflow-hidden rounded-2xl border border-white/[0.07]">
               <div className="border-b border-white/[0.06] bg-white/[0.025] px-4 py-3 text-xs text-muted">
                 {rows.length ? `${rows.length} matching investor${rows.length === 1 ? "" : "s"}` : "No matching investor found"}
               </div>
               {rows.map((row) => (
-                <div key={row.id} role="button" tabIndex={0} onClick={() => setSelected(row)} onKeyDown={(event) => { if (event.key === "Enter") setSelected(row); }} className="flex cursor-pointer flex-col gap-4 border-b border-white/[0.06] px-4 py-4 transition hover:bg-gold/[0.05] last:border-b-0 sm:flex-row sm:items-center sm:justify-between">
+                <div key={row.id} role="link" tabIndex={0} onClick={() => { window.location.href = `/investors/${row.id}/buy-boxes`; }} onKeyDown={(event) => { if (event.key === "Enter") window.location.href = `/investors/${row.id}/buy-boxes`; }} className="flex cursor-pointer flex-col gap-4 border-b border-white/[0.06] px-4 py-4 transition hover:bg-gold/[0.05] last:border-b-0 sm:flex-row sm:items-center sm:justify-between">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="font-medium text-chalk">{row.title || "Untitled investor"}</h3>

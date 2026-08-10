@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { findApprovedPortalUser, NotionConfigError } from "@/lib/notionService";
 import { createOtp } from "@/lib/otpStore";
+// Email delivery is temporarily disabled while the portal is being revised.
+// import { hasMailConfig, sendMail } from "@/lib/serverEmail";
 import type { Role } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -41,12 +43,13 @@ export async function POST(request: Request) {
     }
 
     const otp = createOtp(user);
+    // TODO: Re-enable sendMail(...) when email OTP is ready for production.
 
     return NextResponse.json({
       success: true,
       data: {
         delivery: "screen",
-        message: `Notion verified ${user.name}. Copy the access code below and paste it to open the ${user.role} portal.`,
+        message: `Notion verified ${user.name}. Copy the code below to open the ${user.role} portal.`,
         devCode: otp.code,
         email: user.email,
         role: user.role,

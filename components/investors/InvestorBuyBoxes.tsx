@@ -23,7 +23,7 @@ export default function InvestorBuyBoxes({ investorId }: { investorId: string })
     if (!session?.email) return;
     void fetch("/api/notion/portal/current", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: session.email }), cache: "no-store",
+      body: JSON.stringify({ email: session.email, user: session }),
     }).then(async (response) => {
       const payload = await response.json();
       if (!response.ok || !payload.success) throw new Error(payload.error || "Unable to load God’s Blueprint.");
@@ -35,7 +35,9 @@ export default function InvestorBuyBoxes({ investorId }: { investorId: string })
     const rows = (key: string) => portal?.sections.find((section) => section.key === key)?.rows ?? [];
     const investor = rows("investors").find((row) => norm(row.id) === norm(investorId));
     const buyBoxes = investor ? rows("buy-box-signals").filter((row) => related(row, investor)) : [];
-    const matches = rows("active-matches");
+    const matches = investor
+      ? rows("active-matches").filter((match) => related(match, investor) || buyBoxes.some((box) => related(match, box)))
+      : [];
     return { investor, buyBoxes, matches };
   }, [investorId, portal]);
 
@@ -60,5 +62,21 @@ export default function InvestorBuyBoxes({ investorId }: { investorId: string })
       })}
     </div>
     {!data.buyBoxes.length && <Card className="p-8 text-center text-muted">No buy box is related to this investor in God’s Blueprint.</Card>}
+    <Card className="overflow-hidden border-gold/15">
+      <div className="border-b border-white/[0.06] p-5">
+        <div className="label-mono text-gold">Investor matches</div>
+        <h2 className="mt-2 text-xl font-semibold text-chalk">Related active matches</h2>
+      </div>
+      {data.matches.length ? (
+        <div className="grid gap-3 p-5 md:grid-cols-2">
+          {data.matches.map((match) => (
+            <Link key={match.id} href={`/portal-record/${match.id}`} className="flex items-center justify-between rounded-xl border border-white/[.07] p-4 text-sm transition hover:border-gold/35">
+              <div><div className="font-medium text-chalk">{match.title}</div><div className="mt-1 text-xs text-muted">{match.fields.status || match.fields.stage || "Active match"}</div></div>
+              <span className="text-gold">Open →</span>
+            </Link>
+          ))}
+        </div>
+      ) : <div className="p-6 text-sm text-muted">No active match is related to this investor or their buy boxes.</div>}
+    </Card>
   </div>;
 }

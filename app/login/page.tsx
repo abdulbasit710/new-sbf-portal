@@ -55,9 +55,7 @@ export default function LoginPage() {
       setVerifiedRole(response.role);
       setRole(response.role);
       setNotice(response.message);
-      if (response.devCode) {
-        setScreenCode(response.devCode);
-      }
+      setScreenCode(response.devCode ?? "");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to generate the code.");
     } finally {
@@ -67,12 +65,11 @@ export default function LoginPage() {
 
   const copyCode = async () => {
     if (!screenCode) return;
-
     try {
       await navigator.clipboard.writeText(screenCode);
-      setCopyNotice("Code copied. Paste it into Access Code below.");
+      setCopyNotice("Code copied. Paste it below.");
     } catch {
-      setCopyNotice("Copy failed. Select the code manually and paste it below.");
+      setCopyNotice("Select the code manually and paste it below.");
     }
   };
 
@@ -139,7 +136,7 @@ export default function LoginPage() {
           Secure Sign In
         </h1>
         <p className="mt-1.5 text-center text-sm text-muted">
-          Enter the SBF WORLD email, generate a screen access code, then open the assigned portal.
+          Enter your approved email to generate a temporary on-screen access code.
         </p>
 
         <div className="mt-7">
@@ -194,32 +191,23 @@ export default function LoginPage() {
                 <div className="rounded-xl border border-gold/25 bg-gold/10 px-4 py-3">
                   <div className="label-mono mb-2 text-muted">Generated Access Code</div>
                   <div className="flex items-center justify-between gap-3">
-                    <span className="font-mono text-2xl font-semibold tracking-[0.35em] text-gold">
-                      {screenCode}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={copyCode}
-                      className="rounded-lg border border-gold/30 px-3 py-2 text-xs text-gold transition-colors hover:bg-gold/10"
-                    >
-                      Copy
-                    </button>
+                    <span className="font-mono text-2xl font-semibold tracking-[0.35em] text-gold">{screenCode}</span>
+                    <button type="button" onClick={copyCode} className="rounded-lg border border-gold/30 px-3 py-2 text-xs text-gold transition-colors hover:bg-gold/10">Copy</button>
                   </div>
-                  <p className="mt-2 text-xs text-muted">
-                    This code expires in 10 minutes. Paste it below to continue.
-                  </p>
+                  <p className="mt-2 text-xs text-muted">This code expires in 10 minutes.</p>
                   {copyNotice && <p className="mt-2 text-xs text-emerald-200">{copyNotice}</p>}
                 </div>
               )}
-
               <div>
-                <label className="label-mono mb-1.5 block text-muted">Access Code</label>
+                <label className="label-mono mb-1.5 block text-muted">Email Code</label>
                 <input
                   inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={6}
                   className={field}
-                  placeholder="Paste generated code"
+                  placeholder="Enter 6-digit code"
                   value={code}
-                  onChange={(e) => setCode(e.target.value)}
+                  onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
                 />
               </div>
             </>
@@ -232,7 +220,7 @@ export default function LoginPage() {
                 : "Checking SBF WORLD..."
               : codeSent
                 ? `Open ${ROLE_META[verifiedRole ?? role].label} Portal`
-                : "Generate Random Access Code"}
+                : "Generate Access Code"}
           </Button>
 
           {codeSent && (

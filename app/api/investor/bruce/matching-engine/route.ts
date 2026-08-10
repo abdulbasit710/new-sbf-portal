@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDynamicPortalForEmail, type DynamicPortalPage } from "@/lib/notionService";
 import { scoreAssetForBruce, teaserCandidate, type BruceScore } from "@/lib/bruceMatchingEngine";
+import { isCompleteNewBuildAsset } from "@/lib/assetCompleteness";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -96,7 +97,7 @@ export async function POST(request: Request) {
     const buyBoxRows = allBuyBoxRows.filter(isBruceBuyBox);
     const buyBoxes = buyBoxRows.map(mapBuyBox);
     const selected = buyBoxes.find(box => box.id === body.buyBoxId) || buyBoxes.find(box => /bruce edwards|eden elevations/i.test(`${box.title} ${box.investor} ${box.entity}`)) || buyBoxes[0] || null;
-    const candidateRows = uniqueRows(rowsFromSections(portals,["assets","underwritten-assets","active-matches","deal-flow"]));
+    const candidateRows = uniqueRows(rowsFromSections(portals,["complete-assets"])).filter((row) => isCompleteNewBuildAsset(row.fields));
     const uniqueAssets = new Map<string, BruceScore>();
     candidateRows.forEach(row => { const candidate = teaserCandidate(row.id, row.fields); const key = clean(`${candidate.name}|${candidate.market}`); const scored = scoreAssetForBruce(candidate); const current = uniqueAssets.get(key); if (!current || scored.score > current.score) uniqueAssets.set(key, scored); });
     const candidates = Array.from(uniqueAssets.values()).map(item => selected ? scoreForMandate(item, selected) : item).sort((a,b) => b.score-a.score);

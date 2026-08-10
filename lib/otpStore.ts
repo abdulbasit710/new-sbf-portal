@@ -34,10 +34,16 @@ const WINDOW_MS = 10 * 60 * 1000;
 const keyFor = (email: string, role: string) => `${email.trim().toLowerCase()}::${role}`;
 const windowSlot = (time = Date.now()) => Math.floor(time / WINDOW_MS);
 
-const codeSecret = () =>
-  process.env.PORTAL_CODE_SECRET?.trim() ||
-  process.env.NOTION_API_KEY?.trim() ||
-  "sbf-world-local-dev-code-secret";
+const codeSecret = () => {
+  const configured = process.env.PORTAL_CODE_SECRET?.trim();
+  if (configured) return configured;
+
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("PORTAL_CODE_SECRET is required for email sign-in.");
+  }
+
+  return process.env.NOTION_API_KEY?.trim() || "sbf-world-local-dev-code-secret";
+};
 
 const codeFor = (email: string, role: string, slot = windowSlot()) => {
   const digest = createHmac("sha256", codeSecret())

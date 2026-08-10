@@ -9,6 +9,7 @@ import KpiWidget from "@/components/ui/KpiWidget";
 import { Icon } from "@/components/ui/Icons";
 import { PageHeader } from "@/components/ui/Section";
 import { useSession } from "@/lib/session";
+import { isCompleteNewBuildAsset } from "@/lib/assetCompleteness";
 import type {
   DynamicPortalBlock,
   DynamicPortalDataSection,
@@ -1184,17 +1185,10 @@ function SimpleCommandCenter({
   user: any;
   onRefresh: () => Promise<void>;
 }) {
-  const [liveSummary, setLiveSummary] = useState<null | {
-    assets: { total: number }; buyBoxes: { total: number }; investors: { total: number };
-    underwriting: { total: number }; matches: { total: number; visible: number };
-  }>(null);
-  useEffect(() => {
-    if (!user?.email) return;
-    void fetch(`/api/portal/brad/summary?email=${encodeURIComponent(user.email)}`, { cache: "no-store" })
-      .then(async (response) => { const payload = await response.json(); if (response.ok && payload.success) setLiveSummary(payload.data); })
-      .catch(() => undefined);
-  }, [user?.email]);
   const assetRows = rowsForPortalView(portal, "assets");
+  const completeAssetRows = uniquePortalRows(
+    (portal?.sections ?? []).filter((section) => section.key === "complete-assets").flatMap((section) => section.rows),
+  );
   const buyBoxRows = rowsForPortalView(portal, "buy-box");
   const investorRows = rowsForPortalView(portal, "investors");
   const underwritingRows = rowsForPortalView(portal, "underwriting");
@@ -1203,12 +1197,16 @@ function SimpleCommandCenter({
   const allRows = mergedPortalRows(assetRows, buyBoxRows, investorRows, underwritingRows, matchRows, submissionRows);
   const totalVisibleValue = allRows.reduce((sum, row) => sum + rowCapitalValue(row), 0);
   const latest = submissionRows.slice(0, 4);
+  const pillarAudit = ["Real Estate", "Business", "Capital", "SBF Vault"].map((pillar) => ({
+    pillar,
+    count: allRows.filter((row) => pillarForRow(row).toLowerCase().includes(pillar.toLowerCase())).length,
+  }));
   const countAudit = [
-    ["Assets", liveSummary?.assets.total ?? assetRows.length, "/sbf-vault", "Relation: Source Partner"],
-    ["Buy Boxes / Mandates", liveSummary?.buyBoxes.total ?? buyBoxRows.length, "/buy-box", "Relation: Owner Partner"],
-    ["Underwriting", liveSummary?.underwriting.total ?? underwritingRows.length, "/underwriting", "Relation: Related Partner"],
-    ["Investors / Buyers / Lenders", liveSummary?.investors.total ?? investorRows.length, "/investors", "Relation: Source Partner"],
-    ["Matches", liveSummary?.matches.total ?? matchRows.length, "/deals", liveSummary ? `${liveSummary.matches.visible} partner-visible` : "Relation: Related Partner"],
+    ["Assets", assetRows.length, "/sbf-vault", "Owner scoped"],
+    ["Buy Boxes / Mandates", buyBoxRows.length, "/buy-box", "Owner scoped"],
+    ["Underwriting", underwritingRows.length, "/underwriting", "Owner scoped"],
+    ["Investors / Buyers / Lenders", investorRows.length, "/investors", "Owner scoped"],
+    ["Matches", matchRows.length, "/deals", "Owner scoped"],
   ] as const;
 
   return (
@@ -1223,7 +1221,7 @@ function SimpleCommandCenter({
               Clean numbers only: assets, buy boxes, investors, underwriting, matches, submissions, and visible value. The detailed CRM tables stay inside each section so the dashboard does not look like a spreadsheet had a nervous breakdown.
             </p>
           </div>
-          <div className="grid min-w-[280px] grid-cols-2 gap-3 rounded-3xl border border-white/[0.07] bg-black/25 p-4">
+          <div className="grid w-full grid-cols-2 gap-3 rounded-3xl border border-white/[0.07] bg-black/25 p-4 sm:min-w-[280px] lg:w-auto">
             <CommandMiniMetric label="All records" value={allRows.length} />
             <CommandMiniMetric label="Total value" value={compactMoney(totalVisibleValue)} />
           </div>
@@ -1231,18 +1229,31 @@ function SimpleCommandCenter({
       </div>
 
       <Card className="overflow-hidden border-gold/15">
-        <CardHeader title="Brad's CORE totals" sub="Live God’s Blueprint counts filtered by Brad Gaubert’s Notion relation page ID." />
-        <div className="grid gap-px bg-white/[.06] sm:grid-cols-5">
+        <CardHeader title={`${user?.name ?? "My"} totals`} sub="Live New Build Zone — 8/5/2026 records filtered by the signed-in owner's Notion identity." />
+        <div className="grid gap-px bg-white/[.06] sm:grid-cols-2 xl:grid-cols-5">
           {countAudit.map(([label, live, href, detail]) => <Link key={label} href={href} className="bg-ink-900 p-4 transition hover:bg-gold/[.06]"><div className="label-mono text-muted">{label}</div><div className="mt-2 text-2xl font-semibold text-chalk">{live}</div><div className="mt-1 text-xs text-emerald-300">{detail}</div></Link>)}
         </div>
       </Card>
 
-      <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-5">
+      <Card className="overflow-hidden border-gold/15">
+        <CardHeader title="All SBF WORLD pillars" sub="Every pillar remains available; counts include only records assigned to this signed-in user." />
+        <div className="grid gap-px bg-white/[.06] sm:grid-cols-2 xl:grid-cols-4">
+          {pillarAudit.map(({ pillar, count }) => <div key={pillar} className="bg-ink-900 p-4"><div className="label-mono text-gold">{pillar}</div><div className="mt-2 text-2xl font-semibold text-chalk">{count}</div><div className="mt-1 text-xs text-muted">New Build Zone records</div></div>)}
+        </div>
+      </Card>
+
+      <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
         <SimpleCommandCard
           title="My Assets"
-          subtitle="Assets and signals assigned to this partner. This is the first number Brad should care about. Revolutionary, apparently."
+          subtitle="Assets and signals assigned to the signed-in owner across every SBF WORLD pillar."
           rows={assetRows}
           href="/sbf-vault"
+        />
+        <SimpleCommandCard
+          title="Complete Assets"
+          subtitle="Founder-approved, portal-visible assets with reveal stage, market, value, and asset type complete. Only these assets enter matching."
+          rows={completeAssetRows}
+          href="/matching-engine"
         />
         <SimpleCommandCard
           title="My Buy Boxes"
@@ -1252,7 +1263,7 @@ function SimpleCommandCenter({
         />
         <SimpleCommandCard
           title="My Investors"
-          subtitle="Investors, buyers, and lenders connected to Brad from 04 — Investors, Buyers & Lenders — CORE."
+          subtitle="Investors, buyers, and lenders connected to the signed-in owner."
           rows={investorRows}
           href="/investors"
           showValue={false}
@@ -1623,10 +1634,19 @@ function RecordCardDeck({
   title: string;
   subtitle: string;
 }) {
+  const { session } = useSession();
   const rows = useMemo(() => rowsForPortalView(portal, view), [portal, view]);
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<PortalDatabaseRow | null>(null);
+  const [workflowStep, setWorkflowStep] = useState<"teaser" | "nda" | "underwriting" | "pof" | "submitted" | "loi" | "complete">("teaser");
+  const [ndaAgreed, setNdaAgreed] = useState(false);
+  const [fullUnderwriting, setFullUnderwriting] = useState<PortalDatabaseRow[]>([]);
+  const [pofFiles, setPofFiles] = useState<File[]>([]);
+  const [workflowBusy, setWorkflowBusy] = useState(false);
+  const [workflowError, setWorkflowError] = useState("");
+  const [loiFields, setLoiFields] = useState({ "Offer Amount": "", "Closing Date": "", "Key Terms": "" });
+  const workflowFieldClass = "w-full rounded-xl border border-white/10 bg-ink-900 px-3 py-2.5 text-sm text-chalk outline-none placeholder:text-muted/50 focus:border-gold/50";
   const pageSize = 20;
 
   const filtered = useMemo(() => {
@@ -1644,6 +1664,89 @@ function RecordCardDeck({
   const statusMix = groupRowsByField(rows, ["asset status", "status", "stage"]);
   const topStatus = statusMix[0]?.label ?? "—";
   const hideFinancial = view === "investors";
+
+  const closeRecord = () => {
+    setSelected(null);
+    setWorkflowStep("teaser");
+    setNdaAgreed(false);
+    setFullUnderwriting([]);
+    setPofFiles([]);
+    setWorkflowError("");
+  };
+
+  const consentAndReveal = async () => {
+    if (!selected || !session?.email || !ndaAgreed) return;
+    setWorkflowBusy(true);
+    setWorkflowError("");
+    try {
+      const response = await fetch("/api/notion/deal-workflow", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: session.email,
+          user: session,
+          matchId: selected.id,
+          matchTitle: assetNameForRow(selected),
+          consent: true,
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.success) throw new Error(payload.error || "Unable to record NDA consent.");
+      setFullUnderwriting(Array.isArray(payload.data?.underwriting) ? payload.data.underwriting : []);
+      setWorkflowStep("underwriting");
+    } catch (error) {
+      setWorkflowError(error instanceof Error ? error.message : "Unable to reveal full underwriting.");
+    } finally {
+      setWorkflowBusy(false);
+    }
+  };
+
+  const submitProofOfFunds = async () => {
+    if (!selected || !session?.email || !pofFiles.length) return;
+    setWorkflowBusy(true);
+    setWorkflowError("");
+    try {
+      const data = new FormData();
+      data.set("email", session.email);
+      data.set("submissionType", "proof-of-funds");
+      data.set("user", JSON.stringify(session));
+      data.set("fields", JSON.stringify({
+        "Request Action": "Proof of funds approval",
+        "Target Record ID": selected.id,
+        "Target Record Title": assetNameForRow(selected),
+        "Asset / match / item name": assetNameForRow(selected),
+        "Asset Owner": fieldValue(selected.fields, ["asset owner", "owner partner", "source partner", "owner"]),
+        "NDA status": "Consented",
+        "Proof of Funds Status": "Submitted for owner/admin approval",
+        "Status": "Submitted for Review",
+        "Next Step": "Owner or admin approval required before Letter of Intent",
+      }));
+      pofFiles.forEach((file) => data.append("documents", file));
+      const response = await fetch("/api/notion/portal/submit", { method: "POST", body: data });
+      const payload = await response.json();
+      if (!response.ok || !payload.success) throw new Error(payload.error || "Unable to upload proof of funds.");
+      setWorkflowStep("submitted");
+    } catch (error) {
+      setWorkflowError(error instanceof Error ? error.message : "Unable to upload proof of funds.");
+    } finally {
+      setWorkflowBusy(false);
+    }
+  };
+
+  const workflowRequest = async (action: "status" | "loi") => {
+    if (!selected || !session?.email) return;
+    setWorkflowBusy(true); setWorkflowError("");
+    try {
+      const response = await fetch("/api/notion/deal-workflow", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: session.email, user: session, matchId: selected.id, matchTitle: assetNameForRow(selected), action, loi: loiFields }) });
+      const payload = await response.json();
+      if (!response.ok || !payload.success) throw new Error(payload.error || "Unable to continue this workflow.");
+      if (action === "status") {
+        if (!payload.data?.approved) throw new Error(`Approval is still pending (${payload.data?.status || "Submitted for Review"}).`);
+        setWorkflowStep("loi");
+      } else setWorkflowStep("complete");
+    } catch (error) { setWorkflowError(error instanceof Error ? error.message : "Unable to continue this workflow."); }
+    finally { setWorkflowBusy(false); }
+  };
 
   if (!rows.length) return null;
 
@@ -1689,7 +1792,7 @@ function RecordCardDeck({
             <button
               key={`${row.sourceTitle ?? "source"}-${row.id}`}
               type="button"
-              onClick={() => setSelected(row)}
+              onClick={() => { setSelected(row); setWorkflowStep("teaser"); setWorkflowError(""); }}
               className="sbf-premium-card group rounded-3xl p-5 text-left transition-all duration-300 hover:-translate-y-1 hover:border-gold/45"
             >
               <div className="relative z-10 flex items-start justify-between gap-4">
@@ -1740,7 +1843,7 @@ function RecordCardDeck({
 
       <Modal
         open={Boolean(selected)}
-        onClose={() => setSelected(null)}
+        onClose={closeRecord}
         title={selected ? assetNameForRow(selected) : "SBF WORLD record"}
         sub={selected ? `${assetStatusForRow(selected)} · ${sbfSourceLabel(selected.sourceTitle)}` : undefined}
         width="max-w-5xl"
@@ -1766,6 +1869,35 @@ function RecordCardDeck({
                 </Link>
               ))}
             </div>
+            {view === "matches" && workflowStep === "teaser" && (
+              <div className="flex flex-wrap justify-end gap-3 border-t border-white/[0.07] pt-5">
+                <Button variant="ghost" onClick={closeRecord}>Close teaser</Button>
+                <Button onClick={() => setWorkflowStep("nda")}>View full underwriting</Button>
+              </div>
+            )}
+            {view === "matches" && workflowStep === "nda" && (
+              <div className="space-y-4 rounded-2xl border border-gold/20 bg-gold/[0.045] p-5">
+                <div><div className="label-mono text-gold">SBF WORLD NDA · SBF-NDA-2026.1</div><h3 className="mt-2 text-xl font-semibold text-chalk">Consent required for full underwriting</h3></div>
+                <p className="text-sm leading-6 text-chalk/70">The receiving party agrees to keep all seller information, financial statements, models, underwriting, diligence, pricing, documents, and communications confidential and to use them only to evaluate this opportunity. Access may not be copied, forwarded, or distributed without written approval.</p>
+                <div className="grid gap-3 rounded-xl border border-white/[0.07] bg-black/20 p-4 text-sm sm:grid-cols-2"><div><span className="text-muted">Consenting party</span><div className="mt-1 text-chalk">{session?.name || "Portal user"}</div></div><div><span className="text-muted">Email</span><div className="mt-1 text-chalk">{session?.email}</div></div></div>
+                <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-white/[0.08] p-4 text-sm text-chalk/80"><input type="checkbox" checked={ndaAgreed} onChange={(event) => setNdaAgreed(event.target.checked)} className="mt-1 accent-[#C8A24A]" /><span>I have read and agree to the NDA and consent to an audit record being sent to SBF WORLD administration.</span></label>
+                {workflowError && <div className="rounded-xl border border-red-400/25 bg-red-400/10 p-3 text-sm text-red-200">{workflowError}</div>}
+                <div className="flex justify-end gap-3"><Button variant="ghost" onClick={() => setWorkflowStep("teaser")}>Back</Button><Button disabled={!ndaAgreed || workflowBusy} onClick={() => void consentAndReveal()}>{workflowBusy ? "Recording consent…" : "Consent and proceed"}</Button></div>
+              </div>
+            )}
+            {view === "matches" && workflowStep === "underwriting" && (
+              <div className="space-y-4">
+                <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/[0.06] p-4"><div className="label-mono text-emerald-300">NDA consent recorded</div><p className="mt-2 text-sm text-emerald-100">Full underwriting is visible only in this consented workflow.</p></div>
+                {fullUnderwriting.length ? fullUnderwriting.map((record) => <div key={record.id} className="rounded-2xl border border-gold/15 p-5"><h3 className="text-lg font-semibold text-chalk">{record.title}</h3><div className="mt-4 grid gap-3 md:grid-cols-2">{Object.entries(record.fields).filter(([, value]) => Boolean(value)).map(([key, value]) => <div key={key} className="rounded-xl border border-white/[0.06] bg-black/20 p-4"><div className="label-mono text-muted">{cleanLabel(key)}</div><div className="mt-2 whitespace-pre-wrap break-words text-sm text-chalk/80">{value}</div></div>)}</div></div>) : <div className="rounded-xl border border-amber-300/20 bg-amber-300/[0.06] p-4 text-sm text-amber-100">NDA consent was recorded, but no Underwriting CORE record is related to this match yet.</div>}
+                <div className="flex justify-end gap-3"><Button variant="ghost" onClick={closeRecord}>Close</Button><Button onClick={() => setWorkflowStep("pof")}>Show interest</Button></div>
+              </div>
+            )}
+            {view === "matches" && workflowStep === "pof" && (
+              <div className="space-y-4 rounded-2xl border border-gold/20 bg-gold/[0.045] p-5"><div><div className="label-mono text-gold">Proof of funds</div><h3 className="mt-2 text-xl font-semibold text-chalk">Upload qualification documents</h3><p className="mt-2 text-sm text-muted">Files are attached in Notion and routed to the asset owner and SBF WORLD admin. Letter of Intent remains locked until either party approves.</p></div><input type="file" multiple onChange={(event) => setPofFiles(Array.from(event.target.files ?? []))} className="w-full rounded-xl border border-dashed border-gold/30 bg-black/20 p-5 text-sm text-chalk file:mr-4 file:rounded-lg file:border-0 file:bg-gold file:px-4 file:py-2 file:text-ink-950" />{pofFiles.length > 0 && <div className="text-xs text-muted">{pofFiles.length} file{pofFiles.length === 1 ? "" : "s"} selected</div>}{workflowError && <div className="rounded-xl border border-red-400/25 bg-red-400/10 p-3 text-sm text-red-200">{workflowError}</div>}<div className="flex justify-end gap-3"><Button variant="ghost" onClick={() => setWorkflowStep("underwriting")}>Back</Button><Button disabled={!pofFiles.length || workflowBusy} onClick={() => void submitProofOfFunds()}>{workflowBusy ? "Uploading…" : "Submit proof of funds"}</Button></div></div>
+            )}
+            {view === "matches" && workflowStep === "submitted" && <div className="space-y-4 rounded-2xl border border-emerald-400/20 bg-emerald-400/[0.06] p-5"><div className="label-mono text-emerald-300">Submitted for approval</div><p className="text-sm leading-6 text-emerald-100">Your proof of funds was sent to the asset owner and SBF WORLD admin. The Letter of Intent step remains locked until an approval is recorded in Notion.</p>{workflowError && <div className="rounded-xl border border-amber-300/25 bg-amber-300/10 p-3 text-sm text-amber-100">{workflowError}</div>}<div className="flex justify-end gap-3"><Button variant="ghost" onClick={closeRecord}>Close</Button><Button disabled={workflowBusy} onClick={() => void workflowRequest("status")}>{workflowBusy ? "Checking…" : "Check approval & continue"}</Button></div></div>}
+            {view === "matches" && workflowStep === "loi" && <div className="space-y-4 rounded-2xl border border-gold/20 bg-gold/[0.045] p-5"><div><div className="label-mono text-gold">Letter of Intent</div><h3 className="mt-2 text-xl font-semibold text-chalk">Submit LOI terms</h3><p className="mt-2 text-sm text-muted">Proof of funds is approved. These terms will be routed into the SBF WORLD closing workflow.</p></div><div className="grid gap-3 md:grid-cols-2"><input value={loiFields["Offer Amount"]} onChange={(e) => setLoiFields((v) => ({ ...v, "Offer Amount": e.target.value }))} placeholder="Offer amount" className={workflowFieldClass} /><input type="date" value={loiFields["Closing Date"]} onChange={(e) => setLoiFields((v) => ({ ...v, "Closing Date": e.target.value }))} className={workflowFieldClass} /><textarea value={loiFields["Key Terms"]} onChange={(e) => setLoiFields((v) => ({ ...v, "Key Terms": e.target.value }))} placeholder="Key terms and contingencies" className={`${workflowFieldClass} min-h-28 md:col-span-2`} /></div>{workflowError && <div className="rounded-xl border border-red-400/25 bg-red-400/10 p-3 text-sm text-red-200">{workflowError}</div>}<div className="flex justify-end gap-3"><Button variant="ghost" onClick={closeRecord}>Close</Button><Button disabled={workflowBusy || !loiFields["Offer Amount"]} onClick={() => void workflowRequest("loi")}>{workflowBusy ? "Submitting…" : "Submit Letter of Intent"}</Button></div></div>}
+            {view === "matches" && workflowStep === "complete" && <div className="space-y-4 rounded-2xl border border-emerald-400/20 bg-emerald-400/[0.06] p-5"><div className="label-mono text-emerald-300">LOI submitted</div><p className="text-sm text-emerald-100">The Letter of Intent was routed to SBF WORLD for review and closing coordination.</p><div className="flex justify-end"><Button onClick={closeRecord}>Close</Button></div></div>}
           </div>
         )}
       </Modal>
@@ -1926,8 +2058,10 @@ const safeTeaserFields = [
 ];
 
 const matchingRowsForPortal = (portal: DynamicPortalPage | null) => {
-  const assetSections = (portal?.sections ?? []).filter((section) => section.key === "assets");
-  return uniquePortalRows(assetSections.flatMap((section) => section.rows));
+  const assetSections = (portal?.sections ?? []).filter((section) => section.key === "complete-assets");
+  return uniquePortalRows(assetSections.flatMap((section) => section.rows)).filter((row) =>
+    isCompleteNewBuildAsset(row.fields),
+  );
 };
 
 const normalizedWords = (value: string) =>
@@ -2467,11 +2601,10 @@ export default function DynamicPortalDashboard({ view = "overview" }: { view?: P
     setError("");
 
     try {
-      const response = await fetch(`/api/notion/portal/current?ts=${Date.now()}`, {
+      const response = await fetch("/api/notion/portal/current", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
-        body: JSON.stringify({ email: session.email }),
-        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: session.email, user: session }),
       });
       const payload = await response.json();
       if (!response.ok || !payload.success) throw new Error(payload.error || "Unable to fetch portal.");

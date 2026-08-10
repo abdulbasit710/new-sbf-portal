@@ -4,6 +4,7 @@ import {
   createBruceMatchRequest,
   NotionConfigError,
   uploadPartnerFileToNotion,
+  type BlueprintUser,
   type PartnerPortalSubmissionInput,
 } from "@/lib/notionService";
 import { createCorePortalRecord } from "@/lib/bradPortal";
@@ -28,6 +29,10 @@ const allowedSubmissionTypes = new Set([
   "intro-next-step",
   "core-review",
   "jv-logic",
+  "nda-consent",
+  "show-interest",
+  "proof-of-funds",
+  "loi-request",
 ]);
 
 const parseJsonFields = (value: FormDataEntryValue | null): Record<string, string> => {
@@ -55,13 +60,15 @@ async function parseRequest(request: Request) {
       .getAll("documents")
       .filter((entry): entry is File => entry instanceof File && entry.size > 0);
 
-    return { email, submissionType, fields, files };
+    const user = parseJsonFields(form.get("user")) as unknown as Partial<BlueprintUser>;
+    return { email, submissionType, fields, files, user };
   }
 
   const body = (await request.json()) as {
     email?: string;
     submissionType?: string;
     fields?: Record<string, string>;
+    user?: Partial<BlueprintUser>;
   };
 
   return {
@@ -69,12 +76,13 @@ async function parseRequest(request: Request) {
     submissionType: body.submissionType?.trim() ?? "support",
     fields: body.fields ?? {},
     files: [] as File[],
+    user: body.user,
   };
 }
 
 export async function POST(request: Request) {
   try {
-    const { email, submissionType, fields, files } = await parseRequest(request);
+    const { email, submissionType, fields, files, user } = await parseRequest(request);
 
     if (!email) {
       return NextResponse.json(
@@ -141,7 +149,10 @@ export async function POST(request: Request) {
       });
     }
 
-    const result = await createPartnerPortalSubmission(email, input);
+    const authenticatedUser = user?.email?.trim().toLowerCase() === email && user.role
+      ? { ...user, id: user.id || user.contactId || email, name: user.name || email, email, relationshipType: user.relationshipType || "Portal User", status: "active" as const, source: "notion" as const } as BlueprintUser
+      : undefined;
+    const result = await createPartnerPortalSubmission(email, input, authenticatedUser);
 
     return NextResponse.json({
       success: true,
