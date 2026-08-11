@@ -36,7 +36,7 @@ export async function POST(request: Request) {
         {
           success: false,
           error:
-            "No active Notion user matched this email and selected access profile in 02 — People, Members & Relationships — CORE.",
+            "No active New Build Zone portal user matched this email and selected access profile.",
         },
         { status: 404 },
       );

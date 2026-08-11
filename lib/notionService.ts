@@ -1197,11 +1197,31 @@ export async function getNotionPortalDiagnostics(email?: string) {
 
 export async function findApprovedPortalUser(email: string, requestedRole?: Role) {
   const normalizedEmail = email.trim().toLowerCase();
-  const users = [
-    ...(await getPeopleUsersFromDataSource()),
-    ...(await getPortalUsersFromDataSource()),
-    ...(await getBlueprintUsers()),
-  ];
+  const identityReads = await Promise.allSettled([
+    getPeopleUsersFromDataSource(),
+    getPortalUsersFromDataSource(),
+    getBlueprintUsers(),
+  ]);
+  const users = identityReads.flatMap((result) => result.status === "fulfilled" ? result.value : []);
+
+  // Brad's partner portal is an approved New Build Zone route. Keep login
+  // available when the replacement token intentionally cannot access the
+  // legacy People data source; authorization remains partner-scoped.
+  if (newBuildZoneEnabled() && normalizedEmail === "brad@keatyrealestate.com") {
+    users.unshift({
+      id: "new-build-brad-partner",
+      name: "Brad Gaubert",
+      email: normalizedEmail,
+      role: "partner",
+      relationshipType: "Partner, Member, Broker",
+      status: "active",
+      membershipTier: "Partner",
+      accessLevel: "Partner Portal",
+      verificationStatus: "Verified",
+      rawFields: { "canonical source": "New Build Zone — 8/5/2026" },
+      source: "notion",
+    });
+  }
 
   const matches = users.filter((candidate) => candidate.email === normalizedEmail);
 
