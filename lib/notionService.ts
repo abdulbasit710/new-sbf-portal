@@ -616,6 +616,7 @@ const NEW_BUILD_ZONE_SOURCES = [
 
 const NEW_BUILD_ZONE_PAGE_ID = "3b481791bca08167a380c1b55aafbe4a";
 const NEW_BUILD_BRUCE_INVESTOR_PAGE_ID = "3b481791bca08110aa99e21d8d831d97";
+const NEW_BUILD_BRAD_ASSETS_PAGE_ID = "3b681791bca081bcb193ebaffef3bedc";
 
 const newBuildZoneEnabled = () => Boolean(optionalEnv("NOTION_NEW_BUILD_ZONE_PAGE_ID"));
 
@@ -681,6 +682,59 @@ const canonicalBradInvestorRows = async (): Promise<PortalDatabaseRow[]> => {
       "active matches": JSON.stringify(matches),
     },
   }];
+};
+
+const fieldsFromNewBuildCode = (value: string) => Object.fromEntries(
+  value.split(/\r?\n/).flatMap((line) => {
+    const match = line.match(/^([^:]{2,80}):\s*(.*)$/);
+    return match ? [[match[1].trim().toLowerCase(), match[2].trim()]] : [];
+  }),
+);
+
+const canonicalBradAssetRows = async (): Promise<PortalDatabaseRow[]> => {
+  assertNewBuildZone();
+  const blocks = await getPageBlocks(NEW_BUILD_BRAD_ASSETS_PAGE_ID);
+  return blocks.flatMap((block, index) => {
+    if (block.type !== "code") return [];
+    const fields = fieldsFromNewBuildCode(plainText(block.code.rich_text));
+    if (normalizeComparable(fields["submission type"]) !== "asset") return [];
+    const title = fields["asset / opportunity name"] || fields["submission name"];
+    if (!title || normalizeComparable(fields["source partner name"]) !== "brad gaubert") return [];
+    return [{
+      id: `new-build-brad-asset-${fields["asset registry id"] || index + 1}`,
+      title,
+      sourceTitle: "New Build Zone — Brad's 10 Assets (Canonical)",
+      fields: { ...fields, "canonical source page": NEW_BUILD_BRAD_ASSETS_PAGE_ID },
+    } satisfies PortalDatabaseRow];
+  });
+};
+
+const canonicalNewBuildSectionsForUser = async (user: BlueprintUser): Promise<DynamicPortalDataSection[]> => {
+  const investorRows = await canonicalBradInvestorRows();
+  const investor = investorRows[0];
+  const buyBoxFields = JSON.parse(investor.fields["buy box criteria"] || "{}") as Record<string, string>;
+  const matchRows = (JSON.parse(investor.fields["active matches"] || "[]") as Array<{
+    id: string; title: string; fields: Record<string, string>;
+  }>).map((row) => ({ ...row, sourceTitle: investor.sourceTitle }));
+  const isBruce = normalizeComparable(user.email) === "bruce edenelevations3 com";
+  const bradAssets = await canonicalBradAssetRows();
+  const bruceAssets: PortalDatabaseRow[] = matchRows.map((match) => ({
+    id: `${match.id}-asset`,
+    title: match.title,
+    sourceTitle: "New Build Zone — Bruce Edwards Investor Portal (Canonical)",
+    fields: { ...match.fields, "related investor": "Bruce Edwards", "source partner": "Brad Gaubert" },
+  }));
+  const assets: PortalDatabaseRow[] = isBruce ? bruceAssets : bradAssets;
+  return [
+    { key: "assets", title: "New Build Zone — Assets", description: "Canonical owner-scoped New Build records.", sourceTitles: [NEW_BUILD_BRAD_ASSETS_PAGE_ID], rows: assets },
+    { key: "complete-assets", title: "Complete Assets", description: "Founder-approved New Build assets.", sourceTitles: [NEW_BUILD_BRAD_ASSETS_PAGE_ID], rows: assets.filter((row) => /approved/i.test(row.fields["founder approval"] || "") || isBruce) },
+    { key: "investors", title: "New Build Zone — Investors", description: "Brad-scoped canonical investor.", sourceTitles: [NEW_BUILD_BRUCE_INVESTOR_PAGE_ID], rows: investorRows },
+    { key: "buy-box-signals", title: "New Build Zone — Buy Boxes", description: "Bruce Edwards canonical mandate.", sourceTitles: [NEW_BUILD_BRUCE_INVESTOR_PAGE_ID], rows: [{ id: `${investor.id}-buy-box`, title: investor.fields["buy box"] || "Bruce Edwards Buy Box", sourceTitle: investor.sourceTitle, fields: buyBoxFields }] },
+    { key: "active-matches", title: "New Build Zone — Active Matches", description: "Bruce Edwards canonical match pipeline.", sourceTitles: [NEW_BUILD_BRUCE_INVESTOR_PAGE_ID], rows: matchRows },
+    { key: "underwritten-assets", title: "New Build Zone — Underwriting", description: "NDA-gated canonical underwriting status.", sourceTitles: [NEW_BUILD_BRUCE_INVESTOR_PAGE_ID], rows: assets.map((asset) => ({ id: `nda-gated-${asset.id}`, title: asset.title, sourceTitle: asset.sourceTitle, fields: { status: asset.fields["underwriting status"] || asset.fields.status || "NDA gated", access: "NDA required — protected fields excluded" } })) },
+    { key: "submissions", title: "New Build Zone — Submissions", description: "Brad's canonical New Build submissions.", sourceTitles: [NEW_BUILD_BRAD_ASSETS_PAGE_ID], rows: isBruce ? [] : bradAssets },
+    { key: "documents", title: "New Build Zone — Documents", description: "Documents remain controlled by the canonical gating workflow.", sourceTitles: [NEW_BUILD_BRUCE_INVESTOR_PAGE_ID], rows: [] },
+  ];
 };
 
 const newBuildSourceForTitle = (title: string) => {
@@ -1219,6 +1273,22 @@ export async function findApprovedPortalUser(email: string, requestedRole?: Role
       accessLevel: "Partner Portal",
       verificationStatus: "Verified",
       rawFields: { "canonical source": "New Build Zone — 8/5/2026" },
+      source: "notion",
+    });
+  }
+  if (newBuildZoneEnabled() && normalizedEmail === "bruce@edenelevations3.com") {
+    users.unshift({
+      id: NEW_BUILD_BRUCE_INVESTOR_PAGE_ID,
+      name: "Bruce Edwards",
+      email: normalizedEmail,
+      role: "investor",
+      relationshipType: "Investor / Buyer — Institutional",
+      status: "active",
+      membershipTier: "Investor",
+      accessLevel: "Investor Portal",
+      verificationStatus: "Verified",
+      ndaStatus: "Needed",
+      rawFields: { "canonical source": "New Build Zone — Bruce Edwards Investor Portal" },
       source: "notion",
     });
   }
@@ -2764,7 +2834,13 @@ async function getGodBlueprintSectionsForUser(user: BlueprintUser): Promise<Dyna
   ] as const;
 
   const assetDataSourceId = newBuildSourceForTitle("05 — Assets — CORE");
-  const assetPages = await getDatabaseRows(assetDataSourceId);
+  let assetPages: PageObjectResponse[];
+  try {
+    assetPages = await getDatabaseRows(assetDataSourceId);
+  } catch (error) {
+    console.warn("Queryable CORE sources are unavailable; using canonical New Build portal pages.", error);
+    return canonicalNewBuildSectionsForUser(user);
+  }
   const userOwnerIds = [user.id, ...(user.ownershipIds ?? [])]
     .map((id) => stripDashes(id).toLowerCase())
     .filter(Boolean);
