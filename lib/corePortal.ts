@@ -232,6 +232,31 @@ const linkedToAny = (record: PortalDatabaseRow, aliases: string[], ids: Set<stri
 export async function getCorePortalBundle(identity: PortalIdentity) {
   const user = await getApprovedCoreUser(identity.email);
   if (!user || user.role !== identity.role) throw new PortalAccessError("Portal access is not currently approved in People CORE.");
+  const isBruceNewBuild = user.role === "investor" &&
+    user.email === "bruce@edenelevations3.com" &&
+    Boolean(process.env.NOTION_NEW_BUILD_ZONE_PAGE_ID?.trim());
+  if (isBruceNewBuild) {
+    try {
+      const sections = await canonicalNewBuildSectionsForUser(user);
+      const profile = sections.find((section) => section.key === "investors")?.rows[0] || null;
+      return {
+        user,
+        profile,
+        sections,
+        diagnostics: {
+          bruceBuyBoxCount: sections.find((section) => section.key === "buy-box-signals")?.rows.length || 0,
+          underwritingSourceRows: sections.find((section) => section.key === "underwritten-assets")?.rows.length || 0,
+          underwritingApprovedRows: sections.find((section) => section.key === "underwritten-assets")?.rows.length || 0,
+          underwritingScopedRows: sections.find((section) => section.key === "underwritten-assets")?.rows.length || 0,
+          sourceFallback: "New Build Zone — Bruce Edwards Investor Portal (Canonical)",
+        },
+      };
+    } catch (error) {
+      console.error("Unable to load Bruce's canonical New Build Zone portal; trying CORE sources.", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
   let sourcePages: PageObjectResponse[][];
   try {
     sourcePages = await Promise.all(["partners", "investors", "assets", "buyBoxes", "underwriting", "matches", "vault", "documents", "submissions"].map((key) => query(key as CoreSourceKey)));
