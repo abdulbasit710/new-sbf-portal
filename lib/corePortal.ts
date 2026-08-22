@@ -210,9 +210,18 @@ const approvedUnderwriting = (f: Record<string, string>) => {
   return Boolean(title) && approved && (!status || safeStatus(status));
 };
 const approvedMatch = (f: Record<string, string>) => yes(field(f, ["Founder Approved", "Founder Approval"])) && yes(field(f, ["Visibility Allowed", "Portal Visibility"])) && safeStatus(field(f, ["Status", "Match Status"])) && Boolean(field(f, ["Related Asset"])) && Boolean(field(f, ["Related Investor / Buyer / Lender", "Related Investor", "Related Lender"])) && Boolean(field(f, ["Reveal Stage"]));
+const approvedBruceMatch = (f: Record<string, string>) => {
+  const founder = field(f, ["Founder Approved", "Founder Approval", "Admin Approved", "Approval"]);
+  const visibility = field(f, ["Visibility Allowed", "Portal Visibility", "Bruce Visibility", "Visible to Investor"]);
+  const status = field(f, ["Status", "Match Status", "Approval Status"]);
+  const reveal = field(f, ["Reveal Stage", "Visibility", "Reveal Status"]);
+  const explicitlyApproved = yes(founder) || yes(visibility) || /approved|active|matched|live|ready/i.test(status);
+  const notRestricted = !/draft|pending|review|rejected|declined|denied|archived|internal|private|blocked/i.test(`${status} ${visibility} ${reveal}`);
+  return explicitlyApproved && notRestricted && Boolean(field(f, ["Related Asset", "Asset", "Matched Asset", "Opportunity"]));
+};
 const approvedDocument = (f: Record<string, string>) => yes(field(f, ["Founder Approval", "Founder Approved"])) && safeStatus(field(f, ["Status", "Document Status"])) && Boolean(field(f, ["Approved Audience"])) && Boolean(field(f, ["Reveal Stage"])) && Boolean(field(f, ["File / Attachment", "File", "Attachment"]));
 const approvedVault = (f: Record<string, string>) => yes(field(f, ["Founder Approval", "Founder Approved"])) && safeStatus(field(f, ["Status", "Vault Status"])) && Boolean(field(f, ["Approved Audience"])) && Boolean(field(f, ["Reveal Stage"])) && Boolean(field(f, ["Public-Safe Summary", "Partner-Safe Summary", "Investor-Safe Summary"]));
-const row = (page: PageObjectResponse, key: CoreSourceKey): PortalDatabaseRow => { const fields = fieldsOf(page); return { id: page.id, title: field(fields, ["Name", "Submission Name", "Request", "Asset Name", "Buy Box Name", "Underwriting Name", "Match Name", "Document Name", "Vault Entry"]) || "Not linked yet", fields, sourceTitle: CORE_SOURCES[key].title }; };
+const row = (page: PageObjectResponse, key: CoreSourceKey): PortalDatabaseRow => { const fields = fieldsOf(page); return { id: page.id, title: field(fields, ["Name", "Title", "Submission Name", "Request", "Asset Name", "Opportunity Name", "Deal Name", "Buy Box Name", "Mandate Name", "Buy Box / Mandate", "Investment Mandate", "Underwriting Name", "Match Name", "Document Name", "Vault Entry", "Investor Name", "Partner Name"]) || "Not linked yet", fields, sourceTitle: CORE_SOURCES[key].title }; };
 const owns = (record: PortalDatabaseRow, ids: Set<string>, identity: BlueprintUser) => identity.role === "admin" || [...relationIds(record.fields, ["Related Partner", "Source Partner", "Owner Partner", "Related Investor / Buyer / Lender", "Related Investor", "Owner / Capital Relationship", "Owner Capital Relationship"]), record.id.replaceAll("-", "")].some((id) => ids.has(id)) || norm(Object.values(record.fields).join(" ")).includes(norm(identity.email));
 const audienceAllows = (record: PortalDatabaseRow, identity: BlueprintUser) => { const audience = norm(field(record.fields, ["Approved Audience", "Audience"])); return audience.includes("all") || audience.includes("portal") || audience.includes(identity.role) || audience.includes(norm(identity.name)) || audience.includes(norm(identity.email)); };
 const linkedToAny = (record: PortalDatabaseRow, aliases: string[], ids: Set<string>) => relationIds(record.fields, aliases).some((id) => ids.has(id));
@@ -323,7 +332,7 @@ export async function getCorePortalBundle(identity: PortalIdentity) {
       );
       const values = norm(Object.values(item.fields).join(" "));
       const mentionsBruce = values.includes("bruce edwards") || values.includes("bruce edenelevations3 com");
-      return approvedMatch(item.fields) && (linkedToInvestor || linkedToBuyBox || mentionsBruce);
+      return approvedBruceMatch(item.fields) && (linkedToInvestor || linkedToBuyBox || mentionsBruce);
     }
     if (isBradPartner) return linkedToAny(item, ["Related Partner", "Source Partner", "Owner Partner"], ids) || owns(item, ids, user);
     if (!approvedMatch(item.fields)) return false;
