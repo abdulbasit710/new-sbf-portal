@@ -22,6 +22,7 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+.codex-*.log
 
 # OS/editor
 .DS_Store
@@ -33,4 +34,3 @@ Thumbs.db
 sbf_admin_partner_approval_notifications_work/
 _source_backup/
 _workspace_package.backup.json
-.codex-root-dev*.log
