@@ -42,15 +42,31 @@ const querySourceCache = new Map<CoreSourceKey, string>();
 const querySourceId = async (key: CoreSourceKey) => {
   const cached = querySourceCache.get(key);
   if (cached) return cached;
+  const configuredId = databaseId(key);
   try {
-    const database = await notion().databases.retrieve({ database_id: databaseId(key) });
+    const database = await notion().databases.retrieve({ database_id: configuredId });
     const sources = "data_sources" in database && Array.isArray(database.data_sources) ? database.data_sources : [];
     const id = sources[0]?.id?.replaceAll("-", "") || database.id.replaceAll("-", "");
     querySourceCache.set(key, id);
     return id;
-  } catch (error) {
-    console.error(NOTION_ORIGINAL_DATABASE_ACCESS_ERROR, { source: CORE_SOURCES[key].title, env: CORE_SOURCES[key].env, error: error instanceof Error ? error.message : String(error) });
-    throw new CorePortalError(NOTION_ORIGINAL_DATABASE_ACCESS_ERROR);
+  } catch (databaseError) {
+    // Notion's newer UI often exposes a data-source ID instead of the parent
+    // database ID. Accept either value so Vercel configuration is not tied to
+    // which kind of Notion URL the administrator copied.
+    try {
+      const source = await notion().dataSources.retrieve({ data_source_id: configuredId });
+      const id = source.id.replaceAll("-", "");
+      querySourceCache.set(key, id);
+      return id;
+    } catch (dataSourceError) {
+      console.error(NOTION_ORIGINAL_DATABASE_ACCESS_ERROR, {
+        source: CORE_SOURCES[key].title,
+        env: CORE_SOURCES[key].env,
+        databaseError: databaseError instanceof Error ? databaseError.message : String(databaseError),
+        dataSourceError: dataSourceError instanceof Error ? dataSourceError.message : String(dataSourceError),
+      });
+      throw new CorePortalError(NOTION_ORIGINAL_DATABASE_ACCESS_ERROR);
+    }
   }
 };
 const plain = (items: Array<{ plain_text?: string }> = []) => items.map((item) => item.plain_text || "").join("").trim();
