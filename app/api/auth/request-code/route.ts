@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { NotionConfigError } from "@/lib/notionService";
+import { findApprovedPortalUser, NotionConfigError } from "@/lib/notionService";
 import { getApprovedCoreUser, getCoreUserAccessStatus, CorePortalError } from "@/lib/corePortal";
 import { createOtp } from "@/lib/otpStore";
 // Email delivery is temporarily disabled while the portal is being revised.
@@ -22,9 +22,18 @@ export async function POST(request: Request) {
       );
     }
 
-    const user = await getApprovedCoreUser(email);
+    // Prefer the canonical CORE database, but accept Notion's modern data-source
+    // lookup as well. Workspaces created with the newer Notion UI often expose a
+    // data-source ID instead of a legacy database ID.
+    let coreLookupError: unknown;
+    const coreUser = await getApprovedCoreUser(email).catch((error) => {
+      coreLookupError = error;
+      return null;
+    });
+    const user = coreUser ?? await findApprovedPortalUser(email);
 
     if (!user) {
+      if (coreLookupError) throw coreLookupError;
       const accessStatus = await getCoreUserAccessStatus(email);
       return NextResponse.json(
         {
