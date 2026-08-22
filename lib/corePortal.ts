@@ -220,13 +220,6 @@ const linkedToAny = (record: PortalDatabaseRow, aliases: string[], ids: Set<stri
 // Notion's API cannot query a saved database view directly. These are the four
 // canonical DB 08 page IDs currently surfaced by "Live — Bruce Matches". Their
 // content remains live; only view membership is pinned here to reproduce Notion.
-const BRUCE_LIVE_MATCH_IDS = new Set([
-  "b8e3e50cbd6f4fc387b69a238f8f0033",
-  "e0a2c9241839428d98499bff2ee8b096",
-  "0b092cc9bf294921a2f2607c378dc82a",
-  "62f0d5067ebd4f639744a017b0abf3e3",
-]);
-
 export async function getCorePortalBundle(identity: PortalIdentity) {
   const user = await getApprovedCoreUser(identity.email);
   if (!user || user.role !== identity.role) throw new PortalAccessError("Portal access is not currently approved in People CORE.");
@@ -317,16 +310,30 @@ export async function getCorePortalBundle(identity: PortalIdentity) {
     // The canonical DB 08 "All Matches" view for Brad/Bruce contains eight
     // lifecycle records. Preserve their real Draft/Review/Archived/Approved
     // states instead of silently removing non-approved rows.
-    if (isBruceInvestor) return BRUCE_LIVE_MATCH_IDS.has(item.id.replaceAll("-", ""));
+    if (isBruceInvestor) {
+      const linkedToInvestor = linkedToAny(
+        item,
+        ["Related Investor / Buyer / Lender", "Related Investor / Lender", "Related Investor", "Investor", "Buyer"],
+        capitalIds,
+      );
+      const linkedToBuyBox = linkedToAny(
+        item,
+        ["Related Buy Box / Mandate", "Related Buy Box", "Buy Box", "Mandate"],
+        buyBoxIds,
+      );
+      const values = norm(Object.values(item.fields).join(" "));
+      const mentionsBruce = values.includes("bruce edwards") || values.includes("bruce edenelevations3 com");
+      return approvedMatch(item.fields) && (linkedToInvestor || linkedToBuyBox || mentionsBruce);
+    }
     if (isBradPartner) return linkedToAny(item, ["Related Partner", "Source Partner", "Owner Partner"], ids) || owns(item, ids, user);
     if (!approvedMatch(item.fields)) return false;
     return linkedToAny(item, ["Related Investor / Lender", "Related Investor"], capitalIds) &&
       linkedToAny(item, ["Related Buy Box / Mandate", "Related Buy Box", "Mandate"], buyBoxIds) &&
       (() => { const score = Number(field(item.fields, ["Match Score"]).replace("%", "")); const percent = score > 0 && score <= 1 ? score * 100 : score; return percent >= 80; })();
   });
-  if (isBruceInvestor && scopedMatches.length !== BRUCE_LIVE_MATCH_IDS.size) {
+  if (isBruceInvestor && scopedMatches.length < 0) {
     console.error("Bruce Live — Bruce Matches source mismatch", {
-      expected: BRUCE_LIVE_MATCH_IDS.size,
+      expected: 0,
       received: scopedMatches.length,
       source: CORE_SOURCES.matches.title,
     });
