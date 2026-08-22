@@ -14,7 +14,7 @@ Add these in Vercel:
 
 ```env
 NOTION_API_KEY=your_current_notion_integration_secret
-NOTION_GODS_BLUEPRINT_PAGE_ID=32a966a096c2475a92bd9c05cc38c812
+NOTION_GODS_BLUEPRINT_PAGE_ID=replace_with_live_gods_blueprint_page_id
 PORTAL_CODE_SECRET=any_long_random_string_you_create
 ```
 

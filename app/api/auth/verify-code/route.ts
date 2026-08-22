@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { roleRedirect, verifyOtp } from "@/lib/otpStore";
-import { findApprovedPortalUser, NotionConfigError } from "@/lib/notionService";
+import { NotionConfigError } from "@/lib/notionService";
+import { getApprovedCoreUser } from "@/lib/corePortal";
 import type { Role } from "@/lib/types";
+import { createPortalSession, PORTAL_SESSION_COOKIE, portalSessionCookieOptions } from "@/lib/portalAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -42,7 +44,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const user = "user" in result ? result.user : await findApprovedPortalUser(email, role);
+    const user = "user" in result ? result.user : await getApprovedCoreUser(email);
 
     if (!user) {
       return NextResponse.json(
@@ -54,7 +56,7 @@ export async function POST(request: Request) {
       );
     }
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       success: true,
       data: {
         role: user.role,
@@ -71,6 +73,8 @@ export async function POST(request: Request) {
         redirectPath: roleRedirect(user.role),
       },
     });
+    response.cookies.set(PORTAL_SESSION_COOKIE, createPortalSession(user.email, user.role), portalSessionCookieOptions);
+    return response;
   } catch (error) {
     const status = error instanceof NotionConfigError ? 400 : 502;
     const message = error instanceof Error ? error.message : "Unable to verify the access code.";

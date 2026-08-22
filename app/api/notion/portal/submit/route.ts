@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import {
   createPartnerPortalSubmission,
   createBruceMatchRequest,
+  isNotionSubmissionIntegrationError,
+  NOTION_SUBMISSION_PUBLIC_ERROR,
   NotionConfigError,
   uploadPartnerFileToNotion,
   type BlueprintUser,
@@ -166,9 +168,12 @@ export async function POST(request: Request) {
       },
     });
   } catch (error) {
+    console.error("[Portal submission API] request failed", error);
     const status = error instanceof NotionConfigError ? 400 : 502;
     const message =
-      error instanceof Error
+      isNotionSubmissionIntegrationError(error)
+        ? NOTION_SUBMISSION_PUBLIC_ERROR
+        : error instanceof Error
         ? error.message
         : "Unable to route this submission into Notion right now.";
 

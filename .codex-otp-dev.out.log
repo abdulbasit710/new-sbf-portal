@@ -1,0 +1,114 @@
+
+> sbf-world-os@1.0.0 dev
+> next dev -p 3000
+
+  ▲ Next.js 14.2.35
+  - Local:        http://localhost:3000
+  - Environments: .env.local
+
+ ✓ Starting...
+ ✓ Ready in 2.5s
+ ✓ Compiled /api/auth/request-code in 448ms (87 modules)
+ POST /api/auth/request-code 200 in 5909ms
+ ✓ Compiled /api/notion/portal/notifications in 367ms (89 modules)
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786213916595 200 in 27364ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786213976593 400 in 121321ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786214036593 400 in 121585ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786214096584 400 in 121254ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786214156595 400 in 121271ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786214216597 400 in 122715ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786214242999 400 in 128901ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786214280585 400 in 121646ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786214325597 400 in 121505ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786214369838 400 in 121873ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786214415583 400 in 121781ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786214460583 400 in 121535ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786214504839 400 in 121719ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786214703632 400 in 122999ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786214756592 400 in 121264ms
+ ○ Compiling /_not-found ...
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786214816584 400 in 121644ms
+ ✓ Compiled /_not-found in 3.5s (1227 modules)
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786214936583 404 in 3883ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786214819843 400 in 120919ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786214865595 400 in 120938ms
+ ○ Compiling /_error ...
+ ✓ Compiled /_error in 1222ms (1454 modules)
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786214996583 404 in 1457ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786215056588 404 in 186ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786215116581 404 in 75ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786215176595 404 in 76ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786215236588 404 in 86ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786215282087 404 in 93ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786215315597 404 in 18ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786214550588 200 in 858698ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786215416594 404 in 29ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786215476598 404 in 24ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786215536591 404 in 18ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786214595595 200 in 973623ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786215596656 404 in 15ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786215656583 404 in 36ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786215716597 200 in 24586ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786215836594 400 in 123124ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786215896601 400 in 121505ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786216076593 404 in 33ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786215956593 400 in 121058ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786216136588 404 in 34ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786216016597 400 in 121131ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786216196595 404 in 30ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786216256587 404 in 19ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786216316595 404 in 22ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786216376594 404 in 78ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786216436591 404 in 32ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786215776598 200 in 702861ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786216496614 404 in 29ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786216556592 404 in 22ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786216616584 404 in 28ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786216676597 404 in 30ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786216736307 404 in 30ms
+ GET /api/notion/portal/notifications?email=brad%40keatyrealestate.com&ts=1786216755595 404 in 19ms
+ ✓ Compiled in 3.9s (830 modules)
+ ✓ Compiled /api/notion/portal/current in 425ms (125 modules)
+ POST /api/notion/portal/current 200 in 11459ms
+ ✓ Compiled in 990ms (782 modules)
+ ✓ Compiled in 657ms (782 modules)
+ ✓ Compiled in 483ms (782 modules)
+ ✓ Compiled in 377ms (782 modules)
+ ✓ Compiled in 575ms (782 modules)
+ ✓ Compiled in 713ms (830 modules)
+ ✓ Compiled in 406ms (782 modules)
+ ✓ Compiled in 644ms (782 modules)
+ ✓ Compiled in 495ms (782 modules)
+ ✓ Compiled in 555ms (782 modules)
+ ✓ Compiled /api/notion/portal/current in 304ms (126 modules)
+ POST /api/notion/portal/current 200 in 5472ms
+ ✓ Compiled in 950ms (908 modules)
+ ○ Compiling /_not-found ...
+ ✓ Compiled /_not-found in 1230ms (1453 modules)
+ POST /api/notion/portal/current 404 in 1450ms
+ POST /api/notion/portal/current 200 in 3836ms
+ ✓ Compiled in 1211ms (1467 modules)
+ POST /api/notion/portal/current 200 in 3947ms
+ ✓ Compiled in 707ms (830 modules)
+ ✓ Compiled in 513ms (782 modules)
+ ✓ Compiled in 395ms (782 modules)
+ ✓ Compiled /api/notion/portal/current in 159ms (126 modules)
+ POST /api/notion/portal/current 200 in 6090ms
+ POST /api/notion/portal/current 200 in 5647ms
+ ✓ Compiled in 915ms (908 modules)
+ ✓ Compiled /_not-found in 414ms (1453 modules)
+ POST /api/notion/portal/current 404 in 579ms
+ POST /api/notion/portal/current 200 in 4437ms
+ ✓ Compiled in 941ms (830 modules)
+ ✓ Compiled in 512ms (782 modules)
+ ✓ Compiled in 638ms (782 modules)
+ ✓ Compiled /api/notion/portal/current in 401ms (126 modules)
+ POST /api/notion/portal/current 200 in 11764ms
+ POST /api/notion/portal/current 200 in 6779ms
+ ✓ Compiled in 958ms (908 modules)
+ ✓ Compiled in 671ms (908 modules)
+ POST /api/notion/portal/current 200 in 14006ms
+ ✓ Compiled in 900ms (908 modules)
+ POST /api/notion/portal/current 200 in 10415ms
+ POST /api/notion/portal/current 200 in 10782ms
+ POST /api/notion/portal/current 200 in 7672ms

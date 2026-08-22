@@ -5,24 +5,24 @@ import Button from "@/components/ui/Button";
 import Modal from "@/components/ui/Modal";
 import { Icon } from "@/components/ui/Icons";
 import { useSession } from "@/lib/session";
-import type { BlueprintPageContent, NotionContentBlock } from "@/lib/notionService";
+import type { DynamicPortalDataSection, PortalDatabaseRow } from "@/lib/notionService";
 import { compactBruceValue, useBruceVisibleMatches } from "@/components/matching/BruceVisibleMatches";
 import BruceMatchingEngine from "@/components/matching/BruceMatchingEngine";
+import InvestorNdaAgreement, { INVESTOR_NDA_CHECKBOX, INVESTOR_NDA_VERSION } from "@/components/investors/InvestorNdaAgreement";
 
-type BlueprintBlock = NotionContentBlock & { databaseRows?: Array<Record<string, string>> };
 type DealRow = { id: string; fields: Record<string, string>; source: string };
 
-const INVESTOR_SOURCE_KEYS = new Set([
-  "investors-buyers-lenders",
-  "assets",
-  "buy-boxes-mandates",
-  "underwriting-engine",
-  "matching-engine",
-  "vault-controlled-reveal",
-  "deals-closing",
-  "documents-governance",
-  "investor-buyer-portal-template",
-]);
+const DASHBOARD_SECTION_KEYS: Record<string, string> = {
+  profile: "investors-buyers-lenders",
+  investors: "investors-buyers-lenders",
+  assets: "assets",
+  "complete-assets": "assets",
+  "buy-box-signals": "buy-boxes-mandates",
+  "underwritten-assets": "underwriting-engine",
+  "active-matches": "matching-engine",
+  vault: "vault-controlled-reveal",
+  documents: "documents-governance",
+};
 
 const norm = (value = "") => value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 const field = (fields: Record<string, string>, names: string[]) => {
@@ -60,7 +60,7 @@ function Metric({ label, value, helper, icon }: { label: string; value: string |
 export default function InvestorDashboard() {
   const { session } = useSession();
   const { matches: visibleMatches, visibleValue, loading: matchesLoading } = useBruceVisibleMatches();
-  const [pages, setPages] = useState<BlueprintPageContent[]>([]);
+  const [portalSections, setPortalSections] = useState<DynamicPortalDataSection[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [ndaOpen, setNdaOpen] = useState(false);
@@ -80,15 +80,10 @@ export default function InvestorDashboard() {
       try {
         setError("");
         setLoading(true);
-        const response = await fetch("/api/notion/investor-portal", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: session?.email, name: session?.name, contactId: session?.contactId }),
-          cache: "no-store",
-        });
+        const response = await fetch("/api/portal/dashboard", { cache: "no-store" });
         const payload = await response.json();
         if (!response.ok || !payload.success) throw new Error(payload.error || "Unable to load investor records.");
-        if (!cancelled) setPages((payload.data?.pages || []).filter((page: BlueprintPageContent) => INVESTOR_SOURCE_KEYS.has(page.key)));
+        if (!cancelled) setPortalSections(Array.isArray(payload.data?.sections) ? payload.data.sections : []);
       } catch (cause) {
         if (!cancelled) setError(cause instanceof Error ? cause.message : "Unable to load investor records.");
       } finally {
@@ -101,12 +96,17 @@ export default function InvestorDashboard() {
 
   const rowsByKey = useMemo(() => {
     const out = new Map<string, DealRow[]>();
-    pages.forEach((page) => {
-      const rows = page.blocks.flatMap((block) => ((block as BlueprintBlock).databaseRows || []).map((fields, index) => ({ id: `${page.key}-${block.id}-${index}`, fields, source: page.title })));
-      out.set(page.key, rows);
+    portalSections.forEach((section) => {
+      const key = DASHBOARD_SECTION_KEYS[section.key];
+      if (!key) return;
+      const rows = (section.rows || []).map((row: PortalDatabaseRow) => ({ id: row.id, fields: row.fields, source: row.sourceTitle || section.title }));
+      const existing = out.get(key) || [];
+      const unique = new Map(existing.map((row) => [row.id, row]));
+      rows.forEach((row) => unique.set(row.id, row));
+      out.set(key, [...unique.values()]);
     });
     return out;
-  }, [pages]);
+  }, [portalSections]);
 
   const identityTokens = useMemo(() => [session?.email, session?.contactId, session?.name].filter(Boolean).map((v) => norm(v)), [session]);
   const belongsToInvestor = (row: DealRow) => {
@@ -115,7 +115,7 @@ export default function InvestorDashboard() {
   };
   const investorRows = rowsByKey.get("investors-buyers-lenders") || [];
   const profile = investorRows.find(belongsToInvestor)?.fields || {};
-  const buyBoxes = (rowsByKey.get("buy-boxes-mandates") || []).filter(belongsToInvestor);
+  const buyBoxes = rowsByKey.get("buy-boxes-mandates") || [];
   const activeBuyBoxes = buyBoxes.filter((row) => {
     const status = field(row.fields, ["buy box status", "mandate status", "status"]);
     return !status || /active|approved|submitted|live|ready|current/i.test(status);
@@ -123,7 +123,7 @@ export default function InvestorDashboard() {
   const authoritativeBuyBoxCount = engineBuyBoxCount ?? (loading ? null : activeBuyBoxes.length);
   const hasActiveBuyBoxes = Boolean(authoritativeBuyBoxCount && authoritativeBuyBoxCount > 0);
   const lockRows = (rowsByKey.get("deals-closing") || []).filter((row) => belongsToInvestor(row) && /lock|reserve/i.test(Object.values(row.fields).join(" ")));
-  const documentRows = (rowsByKey.get("documents-governance") || []).filter(belongsToInvestor);
+  const documentRows = rowsByKey.get("documents-governance") || [];
 
   const ndaValue = signedLocally ? "Signed" : field(profile, ["nda status", "nda"] ) || session?.ndaStatus || "Not started";
   const pofValue = field(profile, ["proof of funds status", "proof of funds", "pof status", "pof"]) || "Not uploaded";
@@ -141,7 +141,7 @@ export default function InvestorDashboard() {
     const stamp = new Date().toISOString();
     setSignedLocally(true);
     setNdaOpen(false);
-    try { localStorage.setItem(`sbf-nda-${session?.email || "investor"}`, JSON.stringify({ status: "Signed", signedAt: stamp, version: "SBF-NDA-2026.1", signedBy: session?.name, entity: field(profile, ["company", "entity", "fund"]) })); } catch { /* browser storage may be disabled */ }
+    try { localStorage.setItem(`sbf-nda-${session?.email || "investor"}`, JSON.stringify({ status: "Signed", signedAt: stamp, version: INVESTOR_NDA_VERSION, signedBy: session?.name, entity: field(profile, ["company", "entity", "fund"]) })); } catch { /* browser storage may be disabled */ }
   };
 
   useEffect(() => {
@@ -197,7 +197,7 @@ export default function InvestorDashboard() {
       <section id="investor-buy-boxes">
         <div className="mb-5">
           <div className="label-mono text-gold">My Buy Boxes · Matching Engine</div>
-          <h2 className="mt-2 text-2xl font-semibold text-chalk">Run each mandate against the total asset pool</h2>
+          <h2 className="mt-2 text-2xl font-semibold text-chalk">Review Bruce&apos;s four active matches</h2>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-muted">Only Bruce Edwards and Eden Elevations 3 buy boxes appear here. Choose a mandate, run matching, and review its strongest opportunities without leaving the Investor Dashboard.</p>
         </div>
         <BruceMatchingEngine embedded onBuyBoxesLoaded={setEngineBuyBoxCount} />
@@ -209,8 +209,8 @@ export default function InvestorDashboard() {
 
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/[0.07] pt-5 text-[11px] text-muted"><span>Source: God&apos;s Blueprint · Investor allowlist only · No cross-team fallback</span><span>{loading ? "Synchronizing…" : `Last checked ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}</span></div>
 
-      <Modal open={ndaOpen} onClose={() => setNdaOpen(false)} title="SBF WORLD Non-Disclosure Agreement" sub="Version SBF-NDA-2026.1 · Confidential investor access" width="max-w-3xl">
-        <div className="space-y-5 text-sm leading-6 text-chalk/70"><div className="rounded-2xl border border-gold/15 bg-gold/[0.05] p-4"><div className="label-mono text-gold">Plain-English summary</div><p className="mt-2">Deal information, seller details, financials, underwriting and diligence materials are confidential and may not be copied or distributed without written approval.</p></div><div className="grid gap-3 sm:grid-cols-2"><div><span className="text-muted">Signing investor</span><div className="text-chalk">{session?.name || "Investor"}</div></div><div><span className="text-muted">Entity</span><div className="text-chalk">{display(field(profile, ["company", "entity", "fund", "organization"]))}</div></div></div><div className="max-h-52 overflow-y-auto rounded-2xl border border-white/[0.08] bg-black/25 p-5"><h3 className="font-medium text-chalk">Non-Disclosure Agreement</h3><p className="mt-3">The receiving party agrees to protect all confidential opportunity information disclosed through the SBF WORLD portal, use it solely to evaluate a potential transaction, and restrict access to authorized professional advisers who are bound by equivalent confidentiality duties. Confidential information includes asset identity, seller and broker information, financial statements, models, underwriting, documents, pricing, strategy, and communications.</p><p className="mt-3">Access does not grant ownership, exclusivity, or authority to distribute materials. SBF WORLD may revoke access when qualification, authority, or compliance requirements are not maintained.</p></div><label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-white/[0.08] p-4"><input type="checkbox" checked={ndaConsent} onChange={(e) => setNdaConsent(e.target.checked)} className="mt-1 accent-[#C8A24A]" /><span>I confirm that I have read and agree to the SBF WORLD Non-Disclosure Agreement and will not share, copy, or distribute confidential materials without written approval.</span></label><div className="flex justify-end gap-3"><Button variant="ghost" onClick={() => setNdaOpen(false)}>Cancel</Button><Button disabled={!ndaConsent} onClick={signNda}>Agree, Sign & Continue</Button></div><p className="text-xs text-muted">Signing records your name, entity, timestamp, consent and agreement version in this browser. Production deployment should persist this event to the NDA consent database.</p></div>
+      <Modal open={ndaOpen} onClose={() => setNdaOpen(false)} title="SBF WORLD Investor Portal Master Non Disclosure & Non Circumvention Agreement" sub={`${INVESTOR_NDA_VERSION} · Confidential investor access`} width="max-w-3xl">
+        <div className="space-y-5 text-sm leading-6 text-chalk/70"><div className="grid gap-3 sm:grid-cols-2"><div><span className="text-muted">Signing investor</span><div className="text-chalk">{session?.name || "Investor"}</div></div><div><span className="text-muted">Entity</span><div className="text-chalk">{display(field(profile, ["company", "entity", "fund", "organization"]))}</div></div></div><div className="max-h-[52vh] overflow-y-auto rounded-2xl border border-white/[0.08] bg-black/25 p-5"><InvestorNdaAgreement /></div><label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-gold/20 bg-gold/[.05] p-4"><input type="checkbox" checked={ndaConsent} onChange={(e) => setNdaConsent(e.target.checked)} className="mt-1 accent-[#C8A24A]" /><span>{INVESTOR_NDA_CHECKBOX}</span></label><div className="flex justify-end gap-3"><Button variant="ghost" onClick={() => setNdaOpen(false)}>Cancel</Button><Button disabled={!ndaConsent} onClick={signNda}>I Agree — Continue to Portal</Button></div><p className="text-xs text-muted">Acceptance records the investor, entity, timestamp, consent, and agreement version. Production should also retain title, email, IP address, immutable PDF hash, access logs, and downloads.</p></div>
       </Modal>
 
       <Modal open={Boolean(selectedDeal) && !requestOpen} onClose={() => setSelectedDeal(null)} title={selectedDeal ? safeTitle(selectedDeal) : "Deal review"} sub="Controlled investor access">

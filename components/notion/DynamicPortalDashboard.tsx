@@ -1623,6 +1623,30 @@ const safeAllFieldsForModal = (row: PortalDatabaseRow, hideFinancial = false) =>
     .filter(([key]) => !hideFinancial || !/capital|value|price|budget|amount|asking|deal size|fund|aum/i.test(key))
     .slice(0, 90);
 
+type UnderwritingPackageSection = { name: string; source: string; fields: Array<[string, string]> };
+const safePackageEntries = (fields: Record<string,string>) => Object.entries(fields).filter(([key,value]) => Boolean(value) && !/password|token|secret|private key|bank account|wire|ssn|tax id/i.test(key));
+const matchingEntries = (fields: Record<string,string>, pattern: RegExp) => safePackageEntries(fields).filter(([key]) => pattern.test(key));
+const relatedIdsFrom = (fields: Record<string,string>) => Object.entries(fields).filter(([key]) => /related assets?|^asset$/i.test(key)).flatMap(([,value]) => value.split(",").map(id=>id.trim().replaceAll("-","")).filter(Boolean));
+const underwritingPackageFor = (row: PortalDatabaseRow, portal: DynamicPortalPage | null): UnderwritingPackageSection[] => {
+  const enriched=row as PortalDatabaseRow & {content?:string[];relatedAssets?:PortalDatabaseRow[];relatedSubmissions?:PortalDatabaseRow[]};
+  const relatedIds = new Set(relatedIdsFrom(row.fields));
+  const asset = enriched.relatedAssets?.[0]||(portal?.sections ?? []).filter(section=>section.key==="assets"||section.key==="complete-assets").flatMap(section=>section.rows).find(candidate=>relatedIds.has(candidate.id.replaceAll("-","")));
+  const assetFields = asset ? safePackageEntries(asset.fields) : matchingEntries(row.fields,/underwriting name|asset|property|project|location|market|pillar|deal type|asking price|year built|units|summary|description/i);
+  const submissionFields = enriched.relatedSubmissions?.length?enriched.relatedSubmissions.flatMap(submission=>safePackageEntries(submission.fields).map(([key,value])=>[`${submission.title} — ${key}`,value] as [string,string])):matchingEntries(row.fields,/submission|submitted|submitter|source partner|partner|intake|originat/i);
+  const contentLines=(enriched.content||[]).map((line,index)=>{const parts=line.split(/\s*\|\s*|:\s+/,2);return parts.length===2?[parts[0],parts[1]] as [string,string]:[`Underwriting record ${index+1}`,line] as [string,string]});
+  const underwritingFields = [...matchingEntries(row.fields,/\bnoi\b|t-?12|t-?3|rent roll|expense|cap rate|yield|valuation|dscr|equity|debt split|debt\/equity|summary|description|financial|revenue|income|occupancy|next step|notes/i),...contentLines];
+  const lenderFields = matchingEntries(row.fields,/\bltv\b|\bltc\b|loan amount|loan terms?|interest rate|rate\/terms|amortization|maturity/i);
+  const approvalFields = matchingEntries(row.fields,/package.?ready|founder approval|approved for matching|approved for vault|completeness|confidence/i);
+  return [
+    {name:"Asset Profile",source:"05 — Assets — CORE",fields:assetFields.length?assetFields:[["Underwriting Name",row.title] as [string,string]]},
+    {name:"Submission Data",source:"Partner Submissions — CORE",fields:submissionFields},
+    {name:"Underwriting",source:"07 — Underwriting Engine — CORE",fields:underwritingFields.length?underwritingFields:safePackageEntries(row.fields)},
+    {name:"Lender Fields",source:"07 — Underwriting Engine — CORE",fields:lenderFields},
+    {name:"Approval",source:"07 — Underwriting Engine — CORE + 05 — Assets — CORE",fields:approvalFields},
+  ].filter(section=>section.fields.length);
+};
+const escapeDocumentText = (value:string) => value.replace(/[&<>"']/g,char=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[char]||char));
+
 function RecordCardDeck({
   portal,
   view,
@@ -1645,9 +1669,20 @@ function RecordCardDeck({
   const [pofFiles, setPofFiles] = useState<File[]>([]);
   const [workflowBusy, setWorkflowBusy] = useState(false);
   const [workflowError, setWorkflowError] = useState("");
+  const [recordBusy,setRecordBusy]=useState("");
   const [loiFields, setLoiFields] = useState({ "Offer Amount": "", "Closing Date": "", "Key Terms": "" });
   const workflowFieldClass = "w-full rounded-xl border border-white/10 bg-ink-900 px-3 py-2.5 text-sm text-chalk outline-none placeholder:text-muted/50 focus:border-gold/50";
   const pageSize = 20;
+  const openRecord=async(row:PortalDatabaseRow)=>{setSelected(row);setWorkflowStep("teaser");setWorkflowError("");if(view!=="underwriting")return;setRecordBusy(row.id);try{const response=await fetch(`/api/underwriting/${row.id}`,{cache:"no-store"});const payload=await response.json();if(response.ok&&payload.success&&payload.data)setSelected(payload.data)}catch{/* keep the property data already loaded */}finally{setRecordBusy("")}};
+  const selectedUnderwritingPackage = useMemo(()=>selected&&view==="underwriting"?underwritingPackageFor(selected,portal):[],[selected,view,portal]);
+  const downloadUnderwriting = () => {
+    if(!selected)return;
+    const assetToken=(fieldValue(selected.fields,["Registry ID","Asset ID"])||selected.id.slice(0,8)).replace(/[^a-z0-9-]/gi,"-").toUpperCase();
+    const dateToken=new Date().toISOString().slice(0,10); const registry=`SBF-UW-${assetToken}-${dateToken}`;
+    const rows=selectedUnderwritingPackage.flatMap(section=>section.fields.map(([key,value])=>`<tr><td>${escapeDocumentText(key)}</td><td>${escapeDocumentText(value)}</td></tr>`)).join("");
+    const html=`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${escapeDocumentText(selected.title)} — Full Underwriting Package</title><style>body{font-family:Arial,sans-serif;max-width:1100px;margin:40px auto;padding:0 18px;color:#171717}h1{font-size:25px}p{line-height:1.5}table{width:100%;border-collapse:collapse;margin-top:24px}th,td{border:1px solid #ccc;padding:10px;text-align:left;vertical-align:top}th{background:#f3f1ec}@media(max-width:650px){body{margin:18px auto}table{font-size:12px}th,td{padding:7px}}</style></head><body><h1>DOCUMENT 4 — Full Underwriting Package</h1><p><strong>Record:</strong> ${escapeDocumentText(selected.title)}</p><p><strong>Registry ID:</strong> ${registry}</p><p><strong>Required Gates:</strong> Package-Ready Status + Founder Approval + Data Completeness</p><table><thead><tr><th>Field</th><th>Record Value</th></tr></thead><tbody>${rows}</tbody></table></body></html>`;
+    const url=URL.createObjectURL(new Blob([html],{type:"text/html;charset=utf-8"})); const link=document.createElement("a"); link.href=url; link.download=`${registry}-underwriting.html`; document.body.appendChild(link); link.click(); link.remove(); setTimeout(()=>URL.revokeObjectURL(url),1000);
+  };
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -1792,7 +1827,7 @@ function RecordCardDeck({
             <button
               key={`${row.sourceTitle ?? "source"}-${row.id}`}
               type="button"
-              onClick={() => { setSelected(row); setWorkflowStep("teaser"); setWorkflowError(""); }}
+              onClick={() => void openRecord(row)}
               className="sbf-premium-card group rounded-3xl p-5 text-left transition-all duration-300 hover:-translate-y-1 hover:border-gold/45"
             >
               <div className="relative z-10 flex items-start justify-between gap-4">
@@ -1856,7 +1891,13 @@ function RecordCardDeck({
               <MetricCard label="Geography" value={geographyForRow(selected) || "—"} />
               {!hideFinancial && <MetricCard label="Visible Value" value={compactMoney(rowCapitalValue(selected))} />}
             </div>
-            <div className="rounded-2xl border border-gold/20 bg-gold/[0.055] p-5">
+            {view === "underwriting" && <div className="space-y-5">
+              <div className="flex flex-col gap-4 rounded-2xl border border-gold/20 bg-gold/[0.055] p-5 sm:flex-row sm:items-center sm:justify-between"><div><div className="label-mono text-gold">DOCUMENT 4 — Full Underwriting Package</div><p className="mt-2 text-sm text-chalk/75">Required gates: Package-Ready Status + Founder Approval + Data Completeness</p></div><Button onClick={downloadUnderwriting} icon={Icon.doc(16)}>Download Underwriting</Button></div>
+              {recordBusy&&<div className="rounded-xl border border-gold/20 bg-gold/[.05] p-4 text-sm text-gold">Loading the complete selected Notion record…</div>}
+              <div className="overflow-x-auto rounded-2xl border border-white/[0.08]"><table className="w-full min-w-[560px] text-left text-sm"><thead className="bg-white/[0.055] text-gold"><tr><th className="w-1/3 p-4">Field</th><th className="p-4">Record Value</th></tr></thead><tbody>{selectedUnderwritingPackage.flatMap(section=>section.fields.map(([key,value])=><tr key={`${section.name}-${key}`} className="border-t border-white/[0.07] align-top"><td className="p-4 text-muted">{cleanLabel(key)}</td><td className="whitespace-pre-wrap break-words p-4 leading-6 text-chalk/80">{value}</td></tr>))}</tbody></table></div>
+              <div className="flex justify-end"><Button variant="ghost" onClick={closeRecord}>Close Package</Button></div>
+            </div>}
+            {view !== "underwriting" && <><div className="rounded-2xl border border-gold/20 bg-gold/[0.055] p-5">
               <div className="label-mono text-gold">Partner-safe teaser</div>
               <p className="mt-2 text-sm leading-6 text-chalk/80">{teaserForRow(selected)}</p>
             </div>
@@ -1868,7 +1909,7 @@ function RecordCardDeck({
                   <div className="mt-3 text-xs text-gold">Open field →</div>
                 </Link>
               ))}
-            </div>
+            </div></>}
             {view === "matches" && workflowStep === "teaser" && (
               <div className="flex flex-wrap justify-end gap-3 border-t border-white/[0.07] pt-5">
                 <Button variant="ghost" onClick={closeRecord}>Close teaser</Button>
@@ -2058,10 +2099,14 @@ const safeTeaserFields = [
 ];
 
 const matchingRowsForPortal = (portal: DynamicPortalPage | null) => {
-  const assetSections = (portal?.sections ?? []).filter((section) => section.key === "complete-assets");
-  return uniquePortalRows(assetSections.flatMap((section) => section.rows)).filter((row) =>
-    isCompleteNewBuildAsset(row.fields),
-  );
+  const matchSections = (portal?.sections ?? []).filter((section) => section.key === "active-matches");
+  return uniquePortalRows(matchSections.flatMap((section) => section.rows));
+};
+
+const canonicalMatchScore = (row: PortalDatabaseRow) => {
+  const value = Number(fieldValue(row.fields, ["match score", "portal recommendation score"]).replace("%", ""));
+  if (!Number.isFinite(value)) return 0;
+  return Math.round(value > 0 && value <= 1 ? value * 100 : value);
 };
 
 const normalizedWords = (value: string) =>
@@ -2287,16 +2332,11 @@ function MatchingEnginePanel({
     [buyBoxes, selectedBuyBoxId],
   );
   const scored = useMemo(() => {
-    const q = [filters.assetClass, filters.geography, filters.budget, filters.mandate, filters.ndaStatus, filters.proofOfFunds]
-      .join(" ")
-      .trim();
-
     return allCandidates
-      .map((row) => ({ row, score: scoreMatchRow(row, filters) }))
-      .filter((item) => (q ? item.score >= 28 : true))
+      .map((row) => ({ row, score: canonicalMatchScore(row) }))
       .sort((a, b) => b.score - a.score)
-      .slice(0, 20);
-  }, [allCandidates, filters]);
+      .slice(0, 8);
+  }, [allCandidates]);
 
   const applyBuyBox = (rowId: string) => {
     setSelectedBuyBoxId(rowId);
@@ -2393,7 +2433,7 @@ function MatchingEnginePanel({
           <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
             <div className="max-w-2xl">
             <div className="label-mono text-gold">Brad Matching Engine</div>
-              <h2 className="mt-2 text-2xl font-semibold tracking-tight text-chalk">Match a live buy box to SBF WORLD assets</h2>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight text-chalk">Bruce canonical matching engine</h2>
             <p className="mt-3 text-sm leading-6 text-muted">
                 Select one of Brad’s Notion buy boxes and run it against the 120 Brad-visible asset records. Results appear below ranked by matching score.
             </p>

@@ -4,14 +4,18 @@
   "private": true,
   "description": "SBF WORLD OS — Institutional Capital Deployment System",
   "scripts": {
-    "dev": "next dev",
+    "dev": "npm run check:env && next dev",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
     "notion:find": "node scripts/notion-find-shared-content.mjs",
     "check:env": "node scripts/check-env.mjs",
     "notion:diagnose": "node scripts/notion-diagnose.mjs",
+    "notion:verify-databases": "node scripts/notion-verify-original-databases.mjs",
+    "notion:verify-submissions": "node scripts/notion-submission-preflight.mjs",
     "vercel:check-env": "node scripts/vercel-env-check.mjs"
+    ,"test:admin-core": "node --test tests/admin-core-metrics.test.mjs",
+    "test:notion-submissions": "node --test tests/notion-submission-integration.test.mjs"
   },
   "dependencies": {
     "@notionhq/client": "^5.23.0",

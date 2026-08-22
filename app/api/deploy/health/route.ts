@@ -37,6 +37,7 @@ export async function GET(request: Request) {
           envStatus("NOTION_GODS_BLUEPRINT_PAGE_ID"),
           envStatus("NOTION_PEOPLE_DATA_SOURCE_ID"),
           envStatus("NOTION_PARTNER_SUBMISSIONS_DATA_SOURCE_ID"),
+          envStatus("NOTION_SUBMISSIONS_DATABASE_ID"),
           envStatus("NOTION_SITE_CONTENT_DATA_SOURCE_ID"),
           envStatus("OPENAI_API_KEY"),
         ],

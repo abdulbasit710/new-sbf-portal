@@ -9,11 +9,11 @@ export class BradPortalError extends Error {
 }
 
 const configs: Record<BradDatasetKey, { env: string; title: string; relation: string[]; extra?: "active" }> = {
-  assets: { env: "NOTION_ASSETS_DATABASE_ID", title: "05 — Assets — CORE", relation: ["Source Partner"] },
-  buyBoxes: { env: "NOTION_BUY_BOX_DATABASE_ID", title: "06 — Buy Boxes & Mandates — CORE", relation: ["Owner Partner"], extra: "active" },
-  investors: { env: "NOTION_INVESTORS_DATABASE_ID", title: "04 — Investors, Buyers & Lenders — CORE", relation: ["Source Partner"] },
-  underwriting: { env: "NOTION_UNDERWRITING_DATABASE_ID", title: "07 — Underwriting Engine — CORE", relation: ["Related Partner"] },
-  matches: { env: "NOTION_MATCHING_DATABASE_ID", title: "08 — Matching Engine — CORE", relation: ["Related Partner"] },
+  assets: { env: "NOTION_ASSETS_DB_ID", title: "05 — Assets — CORE", relation: ["Source Partner"] },
+  buyBoxes: { env: "NOTION_BUYBOXES_DB_ID", title: "06 — Buy Boxes & Mandates — CORE", relation: ["Owner Partner"] },
+  investors: { env: "NOTION_INVESTORS_DB_ID", title: "04 — Investors, Buyers & Lenders — CORE", relation: ["Source Partner"] },
+  underwriting: { env: "NOTION_UNDERWRITING_DB_ID", title: "07 — Underwriting Engine — CORE", relation: ["Related Partner"] },
+  matches: { env: "NOTION_MATCHING_DB_ID", title: "08 — Matching Engine — CORE", relation: ["Related Partner"] },
 };
 
 const denyField = /founder|internal|private economics|commission|fee split|legal strategy|bank|wire|password|secret|token|ssn|tax id|raw financial|underwriting logic/i;
@@ -75,7 +75,30 @@ const resultTitle = (item: any) => {
 };
 async function resolveExactNotionId(envName: string, exactTitle: string, object: "data_source" | "page") {
   const configured = optionalEnv(envName);
-  if (configured) return configured;
+  if (configured) {
+    if (object === "page") return configured;
+    const cacheKey = `configured-source:${envName}:${configured}`;
+    const cached = resolvedIds.get(cacheKey);
+    if (cached) return cached;
+    // The canonical env spine stores database container IDs. Notion's modern
+    // query endpoint requires the child data_source_id, so resolve it first.
+    try {
+      const database = await notion().databases.retrieve({ database_id: configured });
+      const sources = "data_sources" in database && Array.isArray(database.data_sources) ? database.data_sources : [];
+      const resolved = sources[0]?.id?.replace(/-/g, "") || configured;
+      resolvedIds.set(cacheKey, resolved);
+      return resolved;
+    } catch (databaseError) {
+      // Allow deployments that intentionally store a data-source ID directly.
+      try {
+        await notion().dataSources.retrieve({ data_source_id: configured });
+        resolvedIds.set(cacheKey, configured);
+        return configured;
+      } catch {
+        throw databaseError;
+      }
+    }
+  }
   const cacheKey = `${object}:${exactTitle}`;
   const cached = resolvedIds.get(cacheKey);
   if (cached) return cached;

@@ -5,6 +5,8 @@ import {
   getInvestorManagerSnapshot,
   NotionConfigError,
 } from "@/lib/notionService";
+import { getCorePortalBundle, CorePortalError } from "@/lib/corePortal";
+import { PortalAccessError, requirePortalSession } from "@/lib/portalAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -38,14 +40,16 @@ const errorResponse = (error: unknown) =>
 
 export async function GET(request: Request) {
   try {
-    const email = new URL(request.url).searchParams.get("email")?.trim().toLowerCase() ?? "";
-    if (!email) return NextResponse.json({ success: false, error: "Portal email is required." }, { status: 400 });
+    const identity = requirePortalSession(request);
+    const bundle = await getCorePortalBundle(identity);
+    const rows = bundle.sections.find((section) => section.key === "investors")?.rows || [];
     return NextResponse.json(
-      { success: true, data: await loadSnapshot(email) },
-      { headers: { "Cache-Control": "private, max-age=30, stale-while-revalidate=60" } },
+      { success: true, data: { sourceTitle: "04 — Investors, Buyers & Lenders — CORE", rows, fields: [], user: bundle.user } },
+      { headers: { "Cache-Control": "private, no-store" } },
     );
   } catch (error) {
-    return errorResponse(error);
+    const status = error instanceof PortalAccessError || error instanceof CorePortalError ? error.status : 502;
+    return NextResponse.json({ success: false, error: error instanceof Error ? error.message : "Investor operation failed." }, { status });
   }
 }
 

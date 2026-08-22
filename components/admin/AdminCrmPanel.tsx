@@ -12,7 +12,6 @@ import { useSession } from "@/lib/session";
 import { fetchAdminCrmSnapshot, updateAdminCrmStatus } from "@/lib/api/adminCrm";
 import type { AdminBlueprintModule, AdminCrmRow, AdminCrmSnapshot, AdminCrmSource, NotionContentBlock } from "@/lib/notionService";
 
-const ADMIN_EMAILS = ["crystal@sbfworld.com", "aly@sbfworld.com"];
 const PAGE_SIZE = 20;
 const MODULE_PAGE_SIZE = 12;
 
@@ -21,11 +20,22 @@ const ADMIN_SECTIONS = [
   { key: "activity", label: "Activity Ledger", icon: Icon.pulse, sub: "By user" },
   { key: "blueprint", label: "God Blueprint OS", icon: Icon.layers, sub: "All pages" },
   { key: "people", label: "People & Access", icon: Icon.users, sub: "Logins" },
+  { key: "partners", label: "Partners", icon: Icon.users, sub: "Pipelines" },
+  { key: "investors", label: "Capital", icon: Icon.bank, sub: "Investors / lenders" },
   { key: "submissions", label: "Submissions", icon: Icon.plus, sub: "Partner intake" },
   { key: "assets", label: "Assets", icon: Icon.market, sub: "All assets" },
   { key: "buy-boxes", label: "Buy Boxes", icon: Icon.trend, sub: "Mandates" },
   { key: "matching", label: "Matching Engine", icon: Icon.pulse, sub: "All matches" },
+  { key: "underwriting", label: "Underwriting", icon: Icon.shield, sub: "Package readiness" },
+  { key: "vault", label: "Controlled Reveal", icon: Icon.shield, sub: "Audience gates" },
   { key: "documents", label: "Documents", icon: Icon.doc, sub: "Diligence" },
+  { key: "deals", label: "Deals / Closings", icon: Icon.deals, sub: "LOI / PSA" },
+  { key: "payments", label: "Revenue / Payouts", icon: Icon.payouts, sub: "Economics" },
+  { key: "events", label: "Events", icon: Icon.pulse, sub: "Member access" },
+  { key: "cigars", label: "Cigars / Commerce", icon: Icon.market, sub: "Inventory / orders" },
+  { key: "pillars", label: "Pillar HQs", icon: Icon.globe, sub: "Seven pillars" },
+  { key: "approvals", label: "Approval Queue", icon: Icon.shield, sub: "Needs action" },
+  { key: "data-quality", label: "Data Quality", icon: Icon.pulse, sub: "Cleanup center" },
   { key: "support", label: "Support", icon: Icon.shield, sub: "Requests" },
   { key: "all", label: "All CRM Records", icon: Icon.globe, sub: "Everything" },
 ] as const;
@@ -57,14 +67,15 @@ const compactAdminMoney = (value: number) => {
 };
 
 function sourceMatches(section: SectionKey, source: AdminCrmSource) {
-  if (["all", "overview", "activity", "blueprint"].includes(section)) return true;
+  if (["all", "overview", "activity", "blueprint", "approvals", "data-quality"].includes(section)) return true;
   if (section === "documents") return source.key === "documents" || source.rows.some((row) => lc(row.title + row.sourceTitle).includes("document"));
   if (section === "support") return source.key === "support" || source.rows.some((row) => lc(row.title + row.route + row.entityType).includes("support"));
   return source.key === section;
 }
 
 function rowMatches(section: SectionKey, row: AdminCrmRow) {
-  if (["all", "overview", "activity", "blueprint"].includes(section)) return true;
+  if (["all", "overview", "activity", "blueprint", "data-quality"].includes(section)) return true;
+  if (section === "approvals") return /new|pending|review|needs|requested|draft/i.test(row.status + " " + row.route);
   if (section === "documents") return lc(row.entityType + row.title + row.sourceTitle + Object.keys(row.fields).join(" ")).includes("document");
   if (section === "support") return lc(row.entityType + row.title + row.route + row.sourceTitle).includes("support");
   return lc(row.sourceTitle + row.entityType).includes(section.replace("-", " ")) || row.sourceTitle.toLowerCase().includes(section);
@@ -249,10 +260,29 @@ function BlueprintSection({ data, query, setQuery, onOpen }: { data: AdminCrmSna
 }
 
 
+function LiveCoreMetric({ source }: { source: AdminCrmSnapshot["coreSources"][number] }) {
+  return <div className="mt-3 space-y-2"><div className={`text-2xl font-semibold ${source.live ? "text-gold" : "text-red-200"}`}>{source.live ? source.count : "Unavailable"}</div><div className="text-[10px] text-muted">{source.live ? "Live Notion query" : "Unavailable — check Notion integration access"}</div><div className="text-[10px] text-muted">Status: {source.status}</div><div className="break-all font-mono text-[9px] text-muted">ID: {source.databaseIds.join(", ")}</div><div className="text-[9px] text-muted">Fetched: {source.fetchedAt}</div>{source.error && <div className="line-clamp-3 text-[9px] text-red-200" title={source.error}>{source.error}</div>}</div>;
+}
+
+function AdminMissionOverview({ data, onNavigate }: { data: AdminCrmSnapshot; onNavigate: (section: SectionKey) => void }) {
+  const sectionFor = (key: string): SectionKey => ({ people: "people", partners: "partners", capital: "investors", assets: "assets", mandates: "buy-boxes", matches: "matching", underwriting: "underwriting", submissions: "submissions", vault: "vault", documents: "documents", deals: "deals", payments: "payments", events: "events", cigars: "cigars", pillars: "pillars" } as Record<string, SectionKey>)[key] || "all";
+  return <div className="space-y-6"><div><div className="label-mono text-gold">Live canonical CORE metrics</div><h2 className="mt-2 text-2xl font-semibold text-chalk">God's Blueprint — CORE database counts</h2><p className="mt-2 text-xs text-muted">Every value below comes from a runtime Notion database query. Page-body text and audit summaries are not used.</p><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">{data.coreSources.map((source)=><button key={source.key} onClick={()=>onNavigate(sectionFor(source.key))} className="group rounded-2xl border border-white/[0.075] bg-gradient-to-br from-white/[0.055] to-black/20 p-4 text-left transition hover:-translate-y-0.5 hover:border-gold/40 hover:shadow-glow-sm"><div className="text-sm text-chalk group-hover:text-gold">{source.name}</div><LiveCoreMetric source={source}/></button>)}</div></div></div>;
+  /* Legacy single-number overview retained below only for migration reference. */
+  const available = (source: string, value: number) => data.diagnostics.unavailableSourceKeys.includes(source) ? "—" : String(value);
+  const kpis = [
+    ["Total People", available("people", data.totals.users), "people"], ["Active Partners", available("partners", data.totals.partners), "partners"], ["Investors", available("capital", data.totals.investors), "investors"], ["Lenders", available("capital", data.totals.lenders), "investors"], ["Active Assets", available("assets", data.totals.assets), "assets"], ["Active Matches", available("matches", data.totals.matches), "matching"], ["Match-Ready Mandates", available("mandates", data.totals.buyBoxes), "buy-boxes"], ["Approvals Needed", String(data.totals.pendingReview), "approvals"],
+  ] as Array<[string, string, SectionKey]>;
+  return <div className="space-y-6">
+    <div><div className="label-mono text-gold">Universal operating metrics</div><h2 className="mt-2 text-2xl font-semibold text-chalk">The entire SBF WORLD universe at a glance</h2><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">{kpis.map(([label,value,target])=><button key={label} onClick={()=>onNavigate(target)} className="group rounded-2xl border border-white/[0.075] bg-gradient-to-br from-white/[0.055] to-black/20 p-4 text-left transition hover:-translate-y-0.5 hover:border-gold/40 hover:shadow-glow-sm"><div className="text-[11px] text-muted group-hover:text-gold">{label}</div><div className="mt-2 text-2xl font-semibold text-chalk">{value}</div><div className="mt-3 text-[10px] text-gold opacity-60">Open command →</div></button>)}</div></div>
+    <Card><CardHeader title="Live CORE Data Health" sub="Direct row counts from canonical databases inside New Build Zone — 8/5/2026"/><div className="grid gap-2 p-5 sm:grid-cols-2 lg:grid-cols-3">{data.sources.map((source)=><div key={source.key} className="flex items-center justify-between rounded-xl border border-white/[.06] bg-black/20 p-3"><div><div className="text-sm text-chalk/80">{source.title}</div><div className="text-[10px] text-muted">{source.rows.length} live rows</div></div><span className={`rounded-full border px-2 py-1 text-[10px] ${source.dataSourceId?"border-emerald-400/20 text-emerald-200":"border-red-400/20 text-red-200"}`}>{source.dataSourceId ? "connected" : "not shared"}</span></div>)}</div></Card>
+  </div>;
+}
+
 function AdminCommandHero({ data, adminEmail, onRefresh }: { data: AdminCrmSnapshot | null; adminEmail: string; onRefresh: () => void }) {
-  const totalVisibleAmount = useMemo(() => (data?.rows ?? []).reduce((sum, row) => sum + parseAdminAmount(row.value), 0), [data?.rows]);
-  const liveSources = data?.sources.filter((source) => source.dataSourceId).length ?? 0;
+  const totalVisibleAmount = data?.totals.totalVisibleAmount ?? 0;
+  const liveSources = data?.sources.filter((source) => source.dataSourceId && !data.diagnostics.unavailableSourceKeys.includes(source.key)).length ?? 0;
   const totalSources = data?.sources.length ?? 0;
+  const metric = (source: string, value?: number) => data?.diagnostics.unavailableSourceKeys.includes(source) ? "—" : value ?? "—";
 
   return (
     <div className="relative mx-auto w-full overflow-hidden rounded-[2.5rem] border border-gold/20 bg-[radial-gradient(circle_at_22%_0%,rgba(212,175,55,0.24),transparent_34rem),radial-gradient(circle_at_90%_20%,rgba(110,231,183,0.09),transparent_24rem),linear-gradient(135deg,rgba(255,255,255,0.075),rgba(255,255,255,0.018)_48%,rgba(0,0,0,0.38))] p-6 shadow-[0_36px_120px_-64px_rgba(212,175,55,0.85)] md:p-8 xl:p-10">
@@ -269,7 +299,8 @@ function AdminCommandHero({ data, adminEmail, onRefresh }: { data: AdminCrmSnaps
             </p>
           </div>
 
-          <div className="mt-8 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="mt-8 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><div className="rounded-3xl border border-gold/20 bg-gold/[0.08] p-5"><div className="label-mono text-muted">Live CORE Sources</div><div className="mt-2 text-3xl font-semibold text-gold">{data ? `${data.coreSources.filter((source)=>source.live).length}/${data.coreSources.length}` : "—"}</div><p className="mt-1 text-xs text-muted">Direct Notion database queries</p></div><div className="rounded-3xl border border-white/[0.07] bg-white/[0.035] p-5"><div className="label-mono text-muted">Last Fetch</div><div className="mt-2 text-sm font-semibold text-chalk">{data?.diagnostics.lastSuccessfulSyncTime ?? "—"}</div><p className="mt-1 text-xs text-muted">Refresh CRM forces a new query</p></div></div>
+          <div className="hidden">
             <div className="rounded-3xl border border-gold/20 bg-gold/[0.08] p-5">
               <div className="label-mono text-muted">CRM Rows</div>
               <div className="mt-2 text-3xl font-semibold text-gold">{data?.totals.totalRows ?? "—"}</div>
@@ -302,13 +333,24 @@ function AdminCommandHero({ data, adminEmail, onRefresh }: { data: AdminCrmSnaps
               </div>
               <Button size="sm" variant="outline" onClick={onRefresh}>Refresh CRM</Button>
             </div>
-            <div className="mt-5 grid grid-cols-2 gap-3">
-              <div className="rounded-2xl border border-white/[0.06] bg-white/[0.025] p-4"><div className="label-mono text-muted">People</div><div className="mt-1 text-2xl font-semibold text-gold">{data?.totals.users ?? "—"}</div></div>
-              <div className="rounded-2xl border border-white/[0.06] bg-white/[0.025] p-4"><div className="label-mono text-muted">Submissions</div><div className="mt-1 text-2xl font-semibold text-gold">{data?.totals.submissions ?? "—"}</div></div>
-              <div className="rounded-2xl border border-white/[0.06] bg-white/[0.025] p-4"><div className="label-mono text-muted">Assets</div><div className="mt-1 text-2xl font-semibold text-gold">{data?.totals.assets ?? "—"}</div></div>
-              <div className="rounded-2xl border border-white/[0.06] bg-white/[0.025] p-4"><div className="label-mono text-muted">Matches</div><div className="mt-1 text-2xl font-semibold text-gold">{data?.totals.matches ?? "—"}</div></div>
+            <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">{data?.coreSources.filter((source)=>["people","submissions","assets","matches"].includes(source.key)).map((source)=><div key={source.key} className="rounded-2xl border border-white/[0.06] bg-white/[0.025] p-4"><div className="label-mono text-muted">{source.name}</div><LiveCoreMetric source={source}/></div>)}</div>
+            <div className="hidden">
+              <div className="rounded-2xl border border-white/[0.06] bg-white/[0.025] p-4"><div className="label-mono text-muted">People</div><div className="mt-1 text-2xl font-semibold text-gold">{metric("people", data?.totals.users)}</div></div>
+              <div className="rounded-2xl border border-white/[0.06] bg-white/[0.025] p-4"><div className="label-mono text-muted">Submissions</div><div className="mt-1 text-2xl font-semibold text-gold">{metric("submissions", data?.totals.submissions)}</div></div>
+              <div className="rounded-2xl border border-white/[0.06] bg-white/[0.025] p-4"><div className="label-mono text-muted">Assets</div><div className="mt-1 text-2xl font-semibold text-gold">{metric("assets", data?.totals.assets)}</div></div>
+              <div className="rounded-2xl border border-white/[0.06] bg-white/[0.025] p-4"><div className="label-mono text-muted">Matches</div><div className="mt-1 text-2xl font-semibold text-gold">{metric("matches", data?.totals.matches)}</div></div>
               <div className="col-span-2 rounded-2xl border border-gold/20 bg-gold/[0.06] p-4"><div className="label-mono text-muted">Total Visible Amount</div><div className="mt-1 text-3xl font-semibold text-gold">{compactAdminMoney(totalVisibleAmount)}</div></div>
             </div>
+            {data?.diagnostics && <details className="mt-4 rounded-2xl border border-white/[0.06] bg-black/20 p-3 text-[11px] text-muted">
+              <summary className="cursor-pointer text-gold">Canonical source diagnostics</summary>
+              <div className="mt-3 space-y-1 font-mono break-all">
+                <div>mode: {data.diagnostics.mode}</div>
+                <div>last sync: {data.diagnostics.lastSuccessfulSyncTime}</div>
+                <div>root: {data.diagnostics.rootPageId}</div>
+                {Object.entries(data.diagnostics.databaseIds).map(([key, ids]) => <div key={key}>{key}: {ids.join(", ")} ({Object.entries(data.diagnostics.recordsReturned).filter(([name])=>name.startsWith(`${key}:`)).reduce((sum,[,count])=>sum+count,0)} returned)</div>)}
+                <div>failed sources: {data.diagnostics.failedSources.length}</div>
+              </div>
+            </details>}
           </div>
 
           <div className="rounded-[2rem] border border-white/[0.07] bg-black/30 p-6">
@@ -631,17 +673,18 @@ export default function AdminCrmPanel() {
   const [updating, setUpdating] = useState("");
 
   const adminEmail = session?.email?.toLowerCase() ?? "";
-  const isAllowedAdmin = ADMIN_EMAILS.includes(adminEmail);
+  const isAllowedAdmin = session?.role === "admin" && /full admin/i.test(session.accessLevel || "");
 
-  const load = async () => {
+  const load = async (forceRefresh = false) => {
     if (!adminEmail) return;
     setLoading(true);
     setError("");
     try {
-      const snapshot = await fetchAdminCrmSnapshot(adminEmail);
+      const snapshot = await fetchAdminCrmSnapshot(adminEmail, forceRefresh);
       setData(snapshot);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to load Admin CRM.");
+      setData(null);
+      setError(err instanceof Error ? err.message : "Live CORE data unavailable");
     } finally {
       setLoading(false);
     }
@@ -661,6 +704,7 @@ export default function AdminCrmPanel() {
     const sourceKeys = new Set(visibleSources.map((source) => source.key));
     return (data?.rows ?? [])
       .filter((row) => rowMatches(section, row) || sourceKeys.has(row.sourceTitle))
+      .filter((row) => section !== "approvals" || /new|pending|review|needs|requested|draft/i.test(row.status + " " + row.route))
       .filter((row) => {
         if (!q || section === "blueprint") return true;
         const haystack = [row.title, row.entityType, row.sourceTitle, row.status, row.owner, row.email, row.contactId, row.partnerScope, ...Object.values(row.fields)].join(" ").toLowerCase();
@@ -692,7 +736,7 @@ export default function AdminCrmPanel() {
       <div className="py-20 text-center">
         <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-red-500/30 bg-red-500/10 text-red-300">✕</div>
         <h2 className="text-lg font-medium text-chalk">Admin access restricted</h2>
-        <p className="mt-1.5 text-sm text-muted">Only Crystal and Aly can open the full CRM admin panel.</p>
+        <p className="mt-1.5 text-sm text-muted">A verified People CORE record with Access Level set to Full Admin is required.</p>
       </div>
     );
   }
@@ -705,7 +749,7 @@ export default function AdminCrmPanel() {
         desc="Crystal and Aly get full admin access to God’s Blueprint, every CORE table, every portal template, every partner command center, and the CRM operating data. Partners remain scoped to their own records, because we are building a CRM, not a data-confetti cannon."
       />
 
-      <AdminCommandHero data={data} adminEmail={adminEmail} onRefresh={load} />
+      <AdminCommandHero data={data} adminEmail={adminEmail} onRefresh={() => void load(true)} />
 
       <div className="grid gap-5 lg:grid-cols-[292px_1fr]">
         <Card className="h-fit p-3 lg:sticky lg:top-24">
@@ -736,6 +780,7 @@ export default function AdminCrmPanel() {
         <div className="space-y-6">
           {loading && <Card className="p-8 text-center text-muted">Loading God Blueprint and full CRM from SBF WORLD…</Card>}
           {error && <Card className="border-red-500/25 bg-red-500/5 p-4 text-sm text-red-200">{error}</Card>}
+          {data && data.diagnostics.failedSources.length > 0 && <Card className="border-amber-400/25 bg-amber-400/5 p-4 text-sm text-amber-100">Live data loaded from the accessible New Build Zone sources. Unavailable: {data.diagnostics.unavailableSourceKeys.join(", ")}. Their metrics display “—”, not zero.</Card>}
 
           {data && section === "blueprint" && <BlueprintSection data={data} query={query} setQuery={setQuery} onOpen={setModuleDetail} />}
 
@@ -743,9 +788,11 @@ export default function AdminCrmPanel() {
 
           {data && section === "people" && <PeopleDirectory data={data} />}
 
-          {data && !["blueprint", "activity", "people"].includes(section) && (
+          {data && section === "overview" && <AdminMissionOverview data={data} onNavigate={setSection} />}
+
+          {data && !["overview", "blueprint", "activity", "people"].includes(section) && (
             <>
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <div className="hidden">
                 <KpiWidget label="Total CRM Rows" value={String(data.totals.totalRows)} icon={Icon.layers(18)} />
                 <KpiWidget label="People / Logins" value={String(data.totals.users)} icon={Icon.users(18)} />
                 <KpiWidget label="Submissions" value={String(data.totals.submissions)} icon={Icon.plus(18)} />
@@ -770,7 +817,7 @@ export default function AdminCrmPanel() {
               <div>
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div><div className="label-mono text-gold">Connected CRM Sources</div><p className="mt-1 text-sm text-muted">SBF WORLD data sources visible to the admin panel.</p></div>
-                  <Button size="sm" variant="outline" onClick={load}>Refresh</Button>
+                  <Button size="sm" variant="outline" onClick={() => void load(true)}>Refresh</Button>
                 </div>
                 <AdminSourceRail sources={data.sources} />
               </div>

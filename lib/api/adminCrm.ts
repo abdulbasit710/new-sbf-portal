@@ -12,8 +12,8 @@ interface AdminUpdateResponse {
   error?: string;
 }
 
-export async function fetchAdminCrmSnapshot(email: string) {
-  const response = await fetch(`/api/admin/crm?email=${encodeURIComponent(email)}`, {
+export async function fetchAdminCrmSnapshot(email: string, forceRefresh = false) {
+  const response = await fetch(`/api/admin/crm?email=${encodeURIComponent(email)}${forceRefresh ? "&refresh=1" : ""}`, {
     cache: "no-store",
   });
   const payload = (await response.json()) as AdminCrmResponse;

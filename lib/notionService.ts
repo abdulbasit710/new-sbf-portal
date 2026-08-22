@@ -12,6 +12,8 @@ import {
 } from "./blueprintRegistry";
 import type { Role } from "./types";
 import { isCompleteNewBuildAsset } from "./assetCompleteness";
+import { isBruceWalkthroughMode } from "./bruceWalkthrough";
+import { getCanonicalCoreData, type CoreRecord } from "./notion/coreDataService";
 
 export interface GoldEmblemData {
   title: string;
@@ -122,13 +124,10 @@ export interface DynamicPortalPage {
 const GOLD_EMBLEM_TITLE = "SBF WORLD Official Gold Emblem";
 const FIELD_SEPARATOR = /^([^:]{2,80}):\s*(.+)$/;
 
-const ADMIN_EMAILS = new Set([
-  "crystal@sbfworld.com",
-  "aly@sbfworld.com",
-  "aly.fredricks12@gmail.com",
-]);
-
-const isAdminEmail = (email: string) => ADMIN_EMAILS.has(email.trim().toLowerCase());
+const hasSovereignAdminAccess = (user: Pick<BlueprintUser, "accessLevel" | "verificationStatus" | "status">) =>
+  /full admin/i.test(user.accessLevel || "") &&
+  /verified|approved|active|yes|true/i.test(user.verificationStatus || "") &&
+  user.status === "active";
 
 export class NotionConfigError extends Error {
   constructor(message: string) {
@@ -144,9 +143,9 @@ const NOTION_ENV_KEYS = [
   "NOTION_SITE_CONTENT_DATA_SOURCE_ID",
   "NOTION_PORTAL_USERS_DATA_SOURCE_ID",
   "NOTION_PEOPLE_DATA_SOURCE_ID",
-  "NOTION_PARTNER_INTAKE_PARENT_PAGE_ID",
-  "NOTION_SUBMISSIONS_PARENT_PAGE_ID",
   "NOTION_PARTNER_SUBMISSIONS_DATA_SOURCE_ID",
+  "NOTION_SUBMISSIONS_DATABASE_ID",
+  "NOTION_UNDERWRITING_DATABASE_ID",
 ] as const;
 
 type NotionEnvKey = (typeof NOTION_ENV_KEYS)[number];
@@ -477,6 +476,34 @@ async function queryDatabaseRows(databaseId: string) {
   }
 }
 
+async function queryOriginalDatabaseRows(databaseId: string) {
+  const notion = getNotionClient();
+  const database = await notion.databases.retrieve({ database_id: databaseId });
+  const dataSourceId = "data_sources" in database && Array.isArray(database.data_sources)
+    ? database.data_sources[0]?.id || ""
+    : "";
+  if (dataSourceId) return queryDatabaseRows(dataSourceId);
+
+  const rows: PageObjectResponse[] = [];
+  let cursor = "";
+  do {
+    const response = await fetch(`https://api.notion.com/v1/databases/${databaseId}/query`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${requireEnv("NOTION_API_KEY")}`,
+        "Content-Type": "application/json",
+        "Notion-Version": "2022-06-28",
+      },
+      body: JSON.stringify({ page_size: 100, ...(cursor ? { start_cursor: cursor } : {}) }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new NotionConfigError(notionErrorMessage(new Error(payload?.message || response.statusText), `Notion database ${databaseId} read`));
+    rows.push(...(Array.isArray(payload.results) ? payload.results.filter(isPageObject) : []));
+    cursor = payload.has_more ? payload.next_cursor || "" : "";
+  } while (cursor);
+  return rows;
+}
+
 const DATABASE_CACHE_TTL_MS = 120_000;
 const DATABASE_STALE_TTL_MS = 15 * 60_000;
 const databaseRowsCache = new Map<string, { fetchedAt: number; rows: PageObjectResponse[] }>();
@@ -709,7 +736,7 @@ const canonicalBradAssetRows = async (): Promise<PortalDatabaseRow[]> => {
   });
 };
 
-const canonicalNewBuildSectionsForUser = async (user: BlueprintUser): Promise<DynamicPortalDataSection[]> => {
+export const canonicalNewBuildSectionsForUser = async (user: BlueprintUser): Promise<DynamicPortalDataSection[]> => {
   const investorRows = await canonicalBradInvestorRows();
   const investor = investorRows[0];
   const buyBoxFields = JSON.parse(investor.fields["buy box criteria"] || "{}") as Record<string, string>;
@@ -1261,7 +1288,7 @@ export async function findApprovedPortalUser(email: string, requestedRole?: Role
   // Brad's partner portal is an approved New Build Zone route. Keep login
   // available when the replacement token intentionally cannot access the
   // legacy People data source; authorization remains partner-scoped.
-  if (newBuildZoneEnabled() && normalizedEmail === "brad@keatyrealestate.com") {
+  if (false && newBuildZoneEnabled() && normalizedEmail === "brad@keatyrealestate.com") {
     users.unshift({
       id: "new-build-brad-partner",
       name: "Brad Gaubert",
@@ -1276,7 +1303,7 @@ export async function findApprovedPortalUser(email: string, requestedRole?: Role
       source: "notion",
     });
   }
-  if (newBuildZoneEnabled() && normalizedEmail === "bruce@edenelevations3.com") {
+  if (false && newBuildZoneEnabled() && normalizedEmail === "bruce@edenelevations3.com") {
     users.unshift({
       id: NEW_BUILD_BRUCE_INVESTOR_PAGE_ID,
       name: "Bruce Edwards",
@@ -1295,18 +1322,18 @@ export async function findApprovedPortalUser(email: string, requestedRole?: Role
 
   const matches = users.filter((candidate) => candidate.email === normalizedEmail);
 
-  if (isAdminEmail(normalizedEmail)) {
-    const matchedAdmin = matches.find((candidate) => candidate.status === "active") ?? matches[0];
+  const matchedAdmin = matches.find(hasSovereignAdminAccess);
+  if (matchedAdmin) {
     return {
-      id: matchedAdmin?.id ?? `admin-${normalizedEmail}`,
-      name: matchedAdmin?.name || (normalizedEmail.startsWith("crystal") ? "Crystal Poe" : "Aly SBF WORLD"),
+      id: matchedAdmin.id,
+      name: matchedAdmin.name,
       email: normalizedEmail,
       role: "admin" as Role,
       relationshipType: "Administrator",
       status: "active" as const,
       contactId: matchedAdmin?.contactId,
       membershipTier: matchedAdmin?.membershipTier || "Admin",
-      accessLevel: "Full System Access",
+      accessLevel: matchedAdmin.accessLevel || "Full Admin",
       interests: matchedAdmin?.interests,
       ndaStatus: matchedAdmin?.ndaStatus,
       verificationStatus: matchedAdmin?.verificationStatus || "Verified",
@@ -1999,6 +2026,85 @@ export interface PartnerPortalSubmissionInput {
   uploadedFiles?: UploadedPartnerFile[];
 }
 
+export const NOTION_SUBMISSION_PUBLIC_ERROR =
+  "Notion submission is not connected yet. Please confirm the live CORE destination is shared with the 'new sbf' integration.";
+
+export class NotionSubmissionIntegrationError extends NotionConfigError {
+  constructor(message: string, public readonly cause?: unknown) {
+    super(message);
+    this.name = "NotionSubmissionIntegrationError";
+  }
+}
+
+export const isNotionSubmissionIntegrationError = (error: unknown) =>
+  error instanceof NotionSubmissionIntegrationError;
+
+const SUBMISSIONS_DESTINATION_ENV = "NOTION_SUBMISSIONS_DATABASE_ID" as const;
+const UNDERWRITING_DESTINATION_ENV = "NOTION_UNDERWRITING_DATABASE_ID" as const;
+const sanitizeNotionId = (value: string) => {
+  const clean = value.trim().replaceAll("-", "");
+  return clean.length > 10 ? `${clean.slice(0, 6)}…${clean.slice(-4)}` : "not-configured";
+};
+
+const notionErrorDetails = (error: unknown) => {
+  const candidate = error as { code?: string; status?: number; message?: string } | null;
+  return {
+    code: candidate?.code || (candidate?.status ? String(candidate.status) : "unknown"),
+    message: candidate?.message || String(error),
+  };
+};
+
+const configuredSubmissionDestination = (submissionType: string) => {
+  const destinationEnv = /underwriting/i.test(submissionType) ? UNDERWRITING_DESTINATION_ENV : SUBMISSIONS_DESTINATION_ENV;
+  const rawValue = process.env[destinationEnv]?.trim() || "";
+  const value = optionalEnv(destinationEnv);
+  console.info("[Notion submission] configuration", {
+    destinationEnv,
+    exists: Boolean(rawValue),
+    destinationId: rawValue ? sanitizeNotionId(rawValue) : "not-configured",
+  });
+  if (!value || /^(auto|discover|search|none|null|replace_with_)/i.test(value)) {
+    throw new NotionSubmissionIntegrationError(
+      `Missing ${destinationEnv}. Add the live CORE database ID and share it with the Notion integration.`,
+    );
+  }
+  return { databaseId: value.trim(), destinationEnv };
+};
+
+const preflightSubmissionDatabase = async (databaseId: string, destinationEnv: string) => {
+  try {
+    return await getNotionClient().databases.retrieve({ database_id: databaseId });
+  } catch (error) {
+    const details = notionErrorDetails(error);
+    if (details.code === "object_not_found" || details.code === "404") {
+      console.error(`The ${destinationEnv} is either wrong or the database is not shared with the Notion integration.`, {
+        destinationEnv,
+        destinationId: sanitizeNotionId(databaseId),
+        notionErrorCode: details.code,
+        notionErrorMessage: details.message,
+      });
+      throw new NotionSubmissionIntegrationError(
+        "The configured Notion destination was not found or is not shared with the 'new sbf' integration. Check the database ID and Notion sharing permissions.",
+        error,
+      );
+    }
+    throw new NotionSubmissionIntegrationError(`Unable to preflight the configured Notion submission destination: ${details.message}`, error);
+  }
+};
+
+const submissionLogContext = (
+  input: PartnerPortalSubmissionInput,
+  user: BlueprintUser,
+  databaseId: string,
+  destinationEnv: string,
+) => ({
+  submissionType: submissionTypeLabel(input.submissionType),
+  assetName: input.fields?.["Asset / match / item name"] || input.fields?.["Asset name"] || input.fields?.["Target Record Title"] || input.fields?.Asset || "Not provided",
+  investorName: input.fields?.["Investor / Buyer Name"] || input.fields?.Investor || user.name,
+  destinationEnv,
+  destinationId: sanitizeNotionId(databaseId),
+});
+
 const submissionTypeLabel = (value: string) =>
   value
     .replace(/[-_]+/g, " ")
@@ -2415,56 +2521,37 @@ export async function createPartnerPortalSubmission(email: string, input: Partne
     "Partner Scope": partnerScope,
   };
 
-  const databaseId = await getPartnerSubmissionsDataSourceId().catch(() => "");
+  const { databaseId, destinationEnv } = configuredSubmissionDestination(input.submissionType);
+  const logContext = submissionLogContext(input, user, databaseId, destinationEnv);
+  console.info("[Notion submission] preflight", logContext);
 
-  if (databaseId) {
-    try {
-      const dataSource = await retrieveDataSource(databaseId);
-      const properties = buildSubmissionPropertiesForSchema(dataSource.properties ?? {}, baseFields, uploadedFiles);
+  try {
+    const database = await preflightSubmissionDatabase(databaseId, destinationEnv);
+    const dataSourceId = "data_sources" in database && Array.isArray(database.data_sources)
+      ? database.data_sources[0]?.id || ""
+      : "";
+    const schema = dataSourceId ? (await retrieveDataSource(dataSourceId)).properties ?? {} : (database as any).properties ?? {};
+    const properties = buildSubmissionPropertiesForSchema(schema, baseFields, uploadedFiles);
+    const response = await notion.pages.create({
+      parent: { database_id: databaseId },
+      properties: properties as any,
+      children: submissionChildren(typeLabel, user, timestamp, cleanFields, route, status, uploadedFiles).slice(0, 90) as any,
+    });
 
-      const response = await createPageViaNotionApi({
-        parent: { data_source_id: databaseId },
-        properties,
-        children: submissionChildren(typeLabel, user, timestamp, cleanFields, route, status, uploadedFiles).slice(0, 90),
-      });
-
-      return {
-        id: response.id,
-        title,
-        route: "Partner Submissions — CORE",
-        status,
-        storage: "database",
-      };
-    } catch (error) {
-      console.warn("Partner Submissions — CORE database write failed; falling back to page routing.", error);
+    console.info("[Notion submission] created", { ...logContext, notionPageId: sanitizeNotionId(response.id) });
+    return { id: response.id, title, route: "Partner Submissions — CORE", status, storage: "database" };
+  } catch (error) {
+    const details = notionErrorDetails(error instanceof NotionSubmissionIntegrationError && error.cause ? error.cause : error);
+    console.error("[Notion submission] failed", { ...logContext, notionErrorCode: details.code, notionErrorMessage: details.message, error });
+    if (error instanceof NotionSubmissionIntegrationError) throw error;
+    if (details.code === "object_not_found" || details.code === "404") {
+      throw new NotionSubmissionIntegrationError(
+        "The configured Notion destination was not found or is not shared with the 'new sbf' integration. Check the database ID and Notion sharing permissions.",
+        error,
+      );
     }
+    throw new NotionSubmissionIntegrationError(`Unable to create SBF WORLD submission in Notion: ${details.message}`, error);
   }
-
-  const parentPageId =
-    optionalEnv("NOTION_PARTNER_INTAKE_PARENT_PAGE_ID") ||
-    optionalEnv("NOTION_SUBMISSIONS_PARENT_PAGE_ID") ||
-    requireEnv("NOTION_GODS_BLUEPRINT_PAGE_ID");
-
-  const response = await createPageViaNotionApi({
-    parent: { page_id: parentPageId },
-    properties: {
-      title: [
-        {
-          type: "text",
-          text: { content: title },
-        },
-      ],
-    },
-    children: submissionChildren(typeLabel, user, timestamp, cleanFields, route, status, uploadedFiles).slice(0, 90),
-  });
-
-  return {
-    id: response.id,
-    title,
-    route: "God’s Blueprint CORE child page fallback",
-    status,
-    storage: "page-fallback",
-  };
 }
 
 export async function getDynamicPortalForEmail(email: string): Promise<DynamicPortalPage | null> {
@@ -2642,7 +2729,27 @@ export interface AdminCrmSnapshot {
     locked: number;
     fullRevealRequests: number;
     totalRows: number;
+    totalVisibleAmount: number;
   };
+  diagnostics: {
+    rootPageId: string;
+    databaseIds: Record<string, string[]>;
+    lastSuccessfulSyncTime: string;
+    recordsReturned: Record<string, number>;
+    failedSources: Array<{ source: string; databaseId: string; error: string }>;
+    unavailableSourceKeys: string[];
+    mode: "live" | "cached" | "fallback";
+  };
+  coreSources: Array<{
+    key: string;
+    name: string;
+    databaseIds: string[];
+    count: number | null;
+    status: "live" | "unavailable" | "permission_denied" | "error";
+    error: string;
+    fetchedAt: string;
+    live: boolean;
+  }>;
 }
 
 
@@ -2787,11 +2894,31 @@ export async function getGodBlueprintAdminSnapshot(): Promise<AdminBlueprintSnap
   const rootPage = await notion.pages.retrieve({ page_id: pageId }).catch(() => null);
   const rootTitle = rootPage && isPageObject(rootPage) ? titleFromPageObject(rootPage) : "God’s Blueprint";
   const rootBlocks = await getPageBlocks(pageId);
-  const children = rootBlocks.filter((block) => block.type === "child_page" || block.type === "child_database");
+  // The canonical New Build Zone contains wrapper pages above many of the
+  // actual CORE data sources. Walk the complete shared tree so the admin
+  // inventory includes every nested page and database visible to Notion.
+  const seenBlocks = new Set<string>();
+  let moduleIndex = 0;
+  const collectModules = async (blocks: BlockObjectResponse[], depth = 0): Promise<AdminBlueprintModule[]> => {
+    if (depth > 12) return [];
+    const children = blocks.filter((block) =>
+      (block.type === "child_page" || block.type === "child_database") && !seenBlocks.has(stripDashes(block.id)),
+    );
+    children.forEach((block) => seenBlocks.add(stripDashes(block.id)));
 
-  const modulesFromChildren = (
-    await Promise.all(children.map((block, index) => blueprintModuleFromChildBlock(block, index)))
-  ).filter((item): item is AdminBlueprintModule => Boolean(item));
+    const modules = (
+      await Promise.all(children.map((block) => blueprintModuleFromChildBlock(block, moduleIndex++)))
+    ).filter((item): item is AdminBlueprintModule => Boolean(item));
+
+    const descendants = await Promise.all(children.map(async (block) => {
+      if (block.type !== "child_page") return [] as AdminBlueprintModule[];
+      const childBlocks = await getPageBlocks(block.id).catch(() => []);
+      return collectModules(childBlocks, depth + 1);
+    }));
+    return [...modules, ...descendants.flat()];
+  };
+
+  const modulesFromChildren = await collectModules(rootBlocks);
 
   const seenTitles = new Set(modulesFromChildren.map((item) => normalizeComparable(item.title)));
   const registryFallbackTitles = BLUEPRINT_MODULES.map((module) => module.title).filter((title) => !seenTitles.has(normalizeComparable(title)));
@@ -2803,6 +2930,9 @@ export async function getGodBlueprintAdminSnapshot(): Promise<AdminBlueprintSnap
     : [];
 
   const modules = [...modulesFromChildren, ...fallbackModules];
+  const uniqueRecordIds = new Set(
+    modules.flatMap((module) => module.rows.map((row) => stripDashes(row.id))).filter(Boolean),
+  );
 
   return {
     pageId,
@@ -2813,7 +2943,7 @@ export async function getGodBlueprintAdminSnapshot(): Promise<AdminBlueprintSnap
       modules: modules.length,
       pages: modules.filter((module) => module.type !== "data_source").length,
       dataSources: modules.filter((module) => module.type === "data_source" || module.dataSourceId).length,
-      records: modules.reduce((sum, module) => sum + module.recordCount, 0),
+      records: uniqueRecordIds.size,
       blocks: modules.reduce((sum, module) => sum + module.blockCount, 0),
     },
   };
@@ -2838,8 +2968,9 @@ async function getGodBlueprintSectionsForUser(user: BlueprintUser): Promise<Dyna
   try {
     assetPages = await getDatabaseRows(assetDataSourceId);
   } catch (error) {
-    console.warn("Queryable CORE sources are unavailable; using canonical New Build portal pages.", error);
-    return canonicalNewBuildSectionsForUser(user);
+    throw new NotionConfigError(
+      `Live CORE data sources are not queryable. Share 02–11 CORE with the Notion integration and configure their current data source IDs. ${error instanceof Error ? error.message : ""}`.trim(),
+    );
   }
   const userOwnerIds = [user.id, ...(user.ownershipIds ?? [])]
     .map((id) => stripDashes(id).toLowerCase())
@@ -2952,20 +3083,25 @@ async function getGodBlueprintSectionsForUser(user: BlueprintUser): Promise<Dyna
 export async function getFullUnderwritingForMatch(
   user: BlueprintUser,
   matchId: string,
+  providedMatchTitle = "",
 ): Promise<PortalDatabaseRow[]> {
   const scopedUser = await attachNewBuildOwnershipIds(user);
   const notion = getNotionClient();
-  const match = await notion.pages.retrieve({ page_id: matchId });
-  if (!isPageObject(match)) throw new NotionConfigError("The selected match could not be found.");
+  const walkthrough = isBruceWalkthroughMode(scopedUser, { id: matchId, title: providedMatchTitle });
+  const match = await notion.pages.retrieve({ page_id: matchId }).catch((error) => {
+    if (walkthrough) return null;
+    throw error;
+  });
+  if (match && !isPageObject(match)) throw new NotionConfigError("The selected match could not be found.");
 
-  const matchFields = pageProperties(match);
-  if (scopedUser.role !== "admin" && !rowBelongsToUser(matchFields, scopedUser, "08 — Matching Engine — CORE")) {
+  const matchFields = match && isPageObject(match) ? pageProperties(match) : {};
+  if (scopedUser.role !== "admin" && !rowBelongsToUser(matchFields, scopedUser, "08 — Matching Engine — CORE") && !walkthrough) {
     throw new NotionConfigError("This match is not assigned to the current portal user.");
   }
 
-  const underwritingId = newBuildSourceForTitle("07 — Underwriting Engine — CORE");
-  const pages = await getDatabaseRows(underwritingId);
-  const matchTitle = titleFromFields(matchFields);
+  const underwritingId = requireEnv("NOTION_UNDERWRITING_DATABASE_ID");
+  const pages = await queryOriginalDatabaseRows(underwritingId);
+  const matchTitle = titleFromFields(matchFields) || providedMatchTitle;
   const relationIds = `${matchId} ${Object.values(matchFields).join(" ")}`
     .match(/[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}/gi) ?? [];
   const tokens = [matchId, ...relationIds, matchTitle]
@@ -3018,6 +3154,7 @@ const adminSourceTargets: Array<{ key: string; title: string; entityType: string
     entityType: "People / Portal Access",
     aliases: ["02 — People, Members & Relationships — CORE", "People Members Relationships", "Relationships CORE", "All People", "People"],
   },
+  { key: "partners", title: "03 — Partner Registry — CORE", entityType: "Partners", aliases: ["03 — Partner Registry — CORE", "Partner Registry — CORE", "Partner Registry"] },
   {
     key: "investors",
     title: "04 — Investors, Buyers & Lenders — CORE",
@@ -3077,6 +3214,12 @@ const adminSourceTargets: Array<{ key: string; title: string; entityType: string
     entityType: "Documents / Diligence",
     aliases: ["Documents & Diligence", "Partner Documents", "Diligence", "Documents"],
   },
+  { key: "vault", title: "09 — Vault & Controlled Reveal — CORE", entityType: "Vault / Controlled Reveal", aliases: ["09 — Vault & Controlled Reveal — CORE", "Vault & Controlled Reveal — CORE", "Controlled Reveal"] },
+  { key: "deals", title: "10 — Deals, LOI, PSA & Closing — CORE", entityType: "Deals / Closing", aliases: ["10 — Deals, LOI, PSA & Closing — CORE", "Deals, LOI, PSA & Closing — CORE", "Deals & Closing"] },
+  { key: "payments", title: "13 — Payments, Revenue & Payouts — CORE", entityType: "Payments / Revenue", aliases: ["13 — Payments, Revenue & Payouts — CORE", "Payments, Revenue & Payouts — CORE", "Payments & Revenue"] },
+  { key: "events", title: "12B — Events & Member Access — CORE", entityType: "Events / Member Access", aliases: ["12B — Events & Member Access — CORE", "Events & Member Access — CORE", "Events"] },
+  { key: "cigars", title: "14 — Cigar Products, Inventory & Orders — CORE", entityType: "Cigars / Commerce", aliases: ["14 — Cigar Products, Inventory & Orders — CORE", "Cigar Products, Inventory & Orders — CORE", "Cigar Products"] },
+  { key: "pillars", title: "15 — Pillar HQ Registry — CORE", entityType: "Pillar HQ", aliases: ["15 — Pillar HQ Registry — CORE", "Pillar HQ Registry — CORE", "Pillar HQ"] },
   {
     key: "support",
     title: "Support Requests",
@@ -3162,10 +3305,71 @@ const uniqueAdminRows = (rows: AdminCrmRow[]) => {
 
 export async function assertAdminAccess(email: string) {
   const user = await findApprovedPortalUser(email, "admin");
-  if (!user || user.role !== "admin" || !isAdminEmail(user.email)) {
-    throw new NotionConfigError("Admin access requires Crystal or Aly with Full System Access.");
+  if (!user || user.role !== "admin" || !hasSovereignAdminAccess(user)) {
+    throw new NotionConfigError("Admin access requires an active, verified People CORE record with Access Level set to Full Admin.");
   }
   return user;
+}
+
+const adminRowFromCoreRecord = (record: CoreRecord): AdminCrmRow => ({
+  id: record.id,
+  title: titleFromFields(record.fields) || adminField(record.fields, ["submission name", "asset name", "match name", "mandate name"]) || "SBF WORLD Record",
+  entityType: adminSourceTargets.find((target) => target.key === record.sourceKey)?.entityType || record.sourceKey,
+  sourceTitle: record.sourceTitle,
+  status: adminStatusFromFields(record.fields),
+  owner: adminField(record.fields, ["submitted by", "partner name", "owner / contact", "owner", "assigned partner", "contact", "name"]),
+  partnerScope: adminField(record.fields, ["partner scope", "scope", "assigned portal", "portal", "partner visibility"]),
+  email: adminField(record.fields, ["submitted email", "email", "contact email", "partner email", "login email"]),
+  contactId: adminField(record.fields, ["contact id", "contact", "member id"]),
+  role: adminField(record.fields, ["role", "relationship type", "capital type", "portal role"]),
+  value: adminField(record.fields, ["amount", "budget", "value", "price", "capital", "purchase price"]),
+  geography: adminField(record.fields, ["geography", "market", "location", "region"]),
+  assetClass: adminField(record.fields, ["asset class", "asset type", "pillar", "type", "category"]),
+  route: adminField(record.fields, ["route", "workflow route", "core route", "routing", "next action"]),
+  updated: adminField(record.fields, ["last updated", "updated", "updated at", "last edited time", "submitted at", "created time"]),
+  fields: record.fields,
+});
+
+export async function getCanonicalAdminCrmSnapshot(email: string, forceRefresh = false): Promise<AdminCrmSnapshot> {
+  const admin = await assertAdminAccess(email);
+  const core = await getCanonicalCoreData({ forceRefresh });
+  const rows = core.records.map(adminRowFromCoreRecord);
+  const sources = Object.entries(core.diagnostics.databaseIds).map(([key, databaseIds]) => ({
+    key,
+    title: rows.find((row) => normalizeComparable(row.entityType).includes(normalizeComparable(key)))?.sourceTitle || key,
+    entityType: adminSourceTargets.find((target) => target.key === key)?.entityType || key,
+    dataSourceId: databaseIds.join(", "),
+    rows: rows.filter((row) => row.sourceTitle === core.records.find((record) => record.sourceKey === key)?.sourceTitle),
+  }));
+  const users = rows.filter((row) => row.sourceTitle.includes("People")).map((row) => normalizePortalUserRow(row.fields, row.id)).filter((user): user is BlueprintUser => Boolean(user));
+  const blueprint: AdminBlueprintSnapshot = {
+    pageId: core.diagnostics.rootPageId,
+    title: "God's Blueprint — CORE (Canonical)",
+    openUrl: notionObjectUrl(core.diagnostics.rootPageId),
+    modules: [],
+    totals: { modules: sources.length, pages: 1, dataSources: Object.values(core.diagnostics.databaseIds).flat().length, records: rows.length, blocks: 0 },
+  };
+  return {
+    admin, sources, rows, users, blueprint,
+    coreSources: core.sources,
+    totals: {
+      users: core.metrics.people,
+      partners: core.metrics.partners,
+      investors: core.metrics.investors,
+      lenders: core.metrics.lenders,
+      submissions: core.metrics.submissions,
+      assets: core.metrics.assets,
+      buyBoxes: core.metrics.matchReadyMandates,
+      matches: core.metrics.matches,
+      pendingReview: core.metrics.pendingReview,
+      approved: core.metrics.approved,
+      locked: core.metrics.locked,
+      fullRevealRequests: rows.filter((row) => /full reveal/i.test(`${row.route} ${row.title} ${Object.values(row.fields).join(" ")}`)).length,
+      totalRows: rows.length,
+      totalVisibleAmount: core.metrics.totalVisibleAmount,
+    },
+    diagnostics: core.diagnostics,
+  };
 }
 
 export async function getAdminCrmSnapshot(email: string): Promise<AdminCrmSnapshot> {
@@ -3220,7 +3424,15 @@ export async function getAdminCrmSnapshot(email: string): Promise<AdminCrmSnapsh
   );
 
   const blueprintRows = blueprint.modules.map(adminRowFromBlueprintModule);
-  const rows = uniqueAdminRows([...sources.flatMap((source) => source.rows), ...blueprintRows]);
+  // Add every record discovered in nested New Build Zone data sources to the
+  // combined admin dataset. Purpose-built source rows come first so their
+  // admin labels are retained when duplicate Notion page IDs are removed.
+  const nestedBlueprintRows = blueprint.modules.flatMap((module) => module.rows);
+  const rows = uniqueAdminRows([
+    ...sources.flatMap((source) => source.rows),
+    ...nestedBlueprintRows,
+    ...blueprintRows,
+  ]);
   const normalizedStatus = (row: AdminCrmRow) => row.status.toLowerCase();
 
   return {
@@ -3229,6 +3441,7 @@ export async function getAdminCrmSnapshot(email: string): Promise<AdminCrmSnapsh
     rows,
     users,
     blueprint,
+    coreSources: [],
     totals: {
       users: users.length,
       partners: users.filter((user) => user.role === "partner").length,
@@ -3243,6 +3456,16 @@ export async function getAdminCrmSnapshot(email: string): Promise<AdminCrmSnapsh
       locked: rows.filter((row) => ["locked", "project locked", "closed"].some((status) => normalizedStatus(row).includes(status))).length,
       fullRevealRequests: rows.filter((row) => normalizeComparable(row.route + " " + row.title + " " + row.entityType + " " + Object.values(row.fields).join(" ")).includes("full reveal")).length,
       totalRows: rows.length,
+      totalVisibleAmount: rows.reduce((sum, row) => sum + Number(adminField(row.fields, ["amount", "value"]).replace(/[^0-9.-]/g, "") || 0), 0),
+    },
+    diagnostics: {
+      rootPageId: optionalEnv("NOTION_NEW_BUILD_ZONE_PAGE_ID"),
+      databaseIds: Object.fromEntries(sources.map((source) => [source.key, source.dataSourceId ? [source.dataSourceId] : []])),
+      lastSuccessfulSyncTime: new Date().toISOString(),
+      recordsReturned: Object.fromEntries(sources.map((source) => [source.key, source.rows.length])),
+      failedSources: [],
+      unavailableSourceKeys: [],
+      mode: "fallback",
     },
   };
 }

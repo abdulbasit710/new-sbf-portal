@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getAdminCrmSnapshot, NotionConfigError } from "@/lib/notionService";
+import { getCanonicalAdminCrmSnapshot, NotionConfigError } from "@/lib/notionService";
+import { CoreConfigurationError, CoreUnavailableError, invalidateCoreDataCache } from "@/lib/notion/coreDataService";
 
 
 export const runtime = "nodejs";
@@ -11,6 +12,7 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const email = searchParams.get("email")?.trim().toLowerCase() ?? "";
+    const refresh = searchParams.get("refresh") === "1";
 
     if (!email) {
       return NextResponse.json(
@@ -19,12 +21,17 @@ export async function GET(request: Request) {
       );
     }
 
-    const data = await getAdminCrmSnapshot(email);
+    if (refresh) invalidateCoreDataCache();
+    const data = await getCanonicalAdminCrmSnapshot(email, refresh);
 
     return NextResponse.json({ success: true, data });
   } catch (error) {
-    const status = error instanceof NotionConfigError ? 403 : 502;
-    const message = error instanceof Error ? error.message : "Unable to load admin CRM.";
+    const status = error instanceof NotionConfigError ? 403 : error instanceof CoreConfigurationError ? 503 : 502;
+    const message = error instanceof CoreUnavailableError || error instanceof CoreConfigurationError
+      ? "Live CORE data unavailable"
+      : error instanceof Error ? error.message : "Live CORE data unavailable";
+    if (error instanceof CoreUnavailableError) console.error("Canonical CORE source fetch failed", error.failures);
+    else console.error("Canonical admin CRM fetch failed", error);
     return NextResponse.json({ success: false, error: message }, { status });
   }
 }

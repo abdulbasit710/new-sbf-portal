@@ -6,6 +6,8 @@ export type BruceCandidate = {
   valueAddTriggers: string[]; neighborhoodGrade: string; safetyPass: boolean | null;
   hasT12: boolean; hasRentRoll: boolean; noi: number | null; underwritingStatus: string;
   visibility: string; partner: string; updated: string;
+  registryId?: string; pillar?: string; dealType?: string; revenuePotential?: string;
+  capRate?: string; matchCriteria?: string; geographyMatch?: string; teaserSummary?: string;
 };
 
 export type BruceScore = BruceCandidate & { score: number; label: string; strengths: string[]; blockers: string[]; nextAction: string; blocked: boolean };

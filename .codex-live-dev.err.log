@@ -1,0 +1,35 @@
+@notionhq/client warn: request fail {
+  code: 'object_not_found',
+  message: 'Could not find data_source with ID: e9dbb6d8-3a12-4954-aa33-3ecf54010fb2. Make sure the relevant pages and databases are shared with your integration "new sbf".',
+  attempt: 0,
+  requestId: '2226cc77-9671-4f12-ab57-1b6a940c6b84'
+}
+[Brad Portal] 07 — Underwriting Engine — CORE query failed (object_not_found). Could not find data_source with ID: e9dbb6d8-3a12-4954-aa33-3ecf54010fb2. Make sure the relevant pages and databases are shared with your integration "new sbf".
+@notionhq/client warn: request fail {
+  code: 'object_not_found',
+  message: 'Could not find data_source with ID: 862237b9-939f-426d-84bc-23f9860b7133. Make sure the relevant pages and databases are shared with your integration "new sbf".',
+  attempt: 0,
+  requestId: 'c3dd34a6-bc8a-48d0-836f-3db126fe57b8'
+}
+[Brad Portal] 08 — Matching Engine — CORE query failed (object_not_found). Could not find data_source with ID: 862237b9-939f-426d-84bc-23f9860b7133. Make sure the relevant pages and databases are shared with your integration "new sbf".
+@notionhq/client warn: request fail {
+  code: 'object_not_found',
+  message: 'Could not find data_source with ID: 5841db84-cd72-451c-904f-82cccfb363ac. Make sure the relevant pages and databases are shared with your integration "new sbf".',
+  attempt: 0,
+  requestId: '13b645f7-72e0-40b7-9937-658ef58f78ea'
+}
+[Brad Portal] 04 — Investors, Buyers & Lenders — CORE query failed (object_not_found). Could not find data_source with ID: 5841db84-cd72-451c-904f-82cccfb363ac. Make sure the relevant pages and databases are shared with your integration "new sbf".
+@notionhq/client warn: request fail {
+  code: 'object_not_found',
+  message: 'Could not find data_source with ID: 7c746761-9bc7-4c20-a1fa-34d827d18f07. Make sure the relevant pages and databases are shared with your integration "new sbf".',
+  attempt: 0,
+  requestId: '4507d087-e38b-424d-905b-98f4ea5c7ecc'
+}
+[Brad Portal] 06 — Buy Boxes & Mandates — CORE query failed (object_not_found). Could not find data_source with ID: 7c746761-9bc7-4c20-a1fa-34d827d18f07. Make sure the relevant pages and databases are shared with your integration "new sbf".
+@notionhq/client warn: request fail {
+  code: 'object_not_found',
+  message: 'Could not find data_source with ID: 06136d88-75f2-4ba5-96e8-9aab92c2a5b1. Make sure the relevant pages and databases are shared with your integration "new sbf".',
+  attempt: 0,
+  requestId: 'd560cea0-11e1-4989-998e-f9d4417e98b4'
+}
+[Brad Portal] 05 — Assets — CORE query failed (object_not_found). Could not find data_source with ID: 06136d88-75f2-4ba5-96e8-9aab92c2a5b1. Make sure the relevant pages and databases are shared with your integration "new sbf".

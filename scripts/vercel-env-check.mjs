@@ -1,6 +1,7 @@
 const required = [
   "NOTION_API_KEY",
   "NOTION_GODS_BLUEPRINT_PAGE_ID",
+  "NOTION_SUBMISSIONS_DATABASE_ID",
 ];
 
 const recommended = [

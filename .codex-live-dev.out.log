@@ -1,0 +1,26 @@
+
+> sbf-world-os@1.0.0 dev
+> npm run check:env && next dev -p 3000
+
+
+> sbf-world-os@1.0.0 check:env
+> node scripts/check-env.mjs
+
+Notion token found.
+Canonical CORE root and all Admin Portal source IDs found.
+Screen access-code login enabled. SMTP email setup is not required.
+  ▲ Next.js 14.2.35
+  - Local:        http://localhost:3000
+  - Environments: .env.local
+
+ ✓ Starting...
+ ✓ Ready in 3.5s
+ ○ Compiling /api/portal/brad/health ...
+ ✓ Compiled /api/portal/brad/health in 738ms (86 modules)
+ GET /api/portal/brad/health?email=brad@keatyrealestate.com 200 in 1996ms
+ ✓ Compiled in 260ms (86 modules)
+ ○ Compiling /_not-found ...
+ ✓ Compiled /_not-found in 6.6s (1242 modules)
+ GET /api/portal/brad/health?email=brad@keatyrealestate.com 404 in 6846ms
+ ✓ Compiled in 1287ms (597 modules)
+ ✓ Compiled in 1200ms (597 modules)
