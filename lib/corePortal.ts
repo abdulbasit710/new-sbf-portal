@@ -35,39 +35,55 @@ const notion = () => {
 const databaseId = (key: CoreSourceKey) => {
   const source = CORE_SOURCES[key];
   const id = process.env[source.env]?.trim().replaceAll("-", "");
-  if (!id || /^(auto|paste_|replace_)/i.test(id)) throw new CorePortalError(`${source.env} must be set to the original database ID for ${source.title}.`);
-  return id;
+  return id && !/^(auto|paste_|replace_)/i.test(id) ? id : "";
 };
 const querySourceCache = new Map<CoreSourceKey, string>();
 const querySourceId = async (key: CoreSourceKey) => {
   const cached = querySourceCache.get(key);
   if (cached) return cached;
   const configuredId = databaseId(key);
-  try {
-    const database = await notion().databases.retrieve({ database_id: configuredId });
-    const sources = "data_sources" in database && Array.isArray(database.data_sources) ? database.data_sources : [];
-    const id = sources[0]?.id?.replaceAll("-", "") || database.id.replaceAll("-", "");
-    querySourceCache.set(key, id);
-    return id;
-  } catch (databaseError) {
+  if (configuredId) {
     // Notion's newer UI often exposes a data-source ID instead of the parent
     // database ID. Accept either value so Vercel configuration is not tied to
     // which kind of Notion URL the administrator copied.
     try {
-      const source = await notion().dataSources.retrieve({ data_source_id: configuredId });
-      const id = source.id.replaceAll("-", "");
+      const database = await notion().databases.retrieve({ database_id: configuredId });
+      const sources = "data_sources" in database && Array.isArray(database.data_sources) ? database.data_sources : [];
+      const id = sources[0]?.id?.replaceAll("-", "") || database.id.replaceAll("-", "");
       querySourceCache.set(key, id);
       return id;
-    } catch (dataSourceError) {
-      console.error(NOTION_ORIGINAL_DATABASE_ACCESS_ERROR, {
-        source: CORE_SOURCES[key].title,
-        env: CORE_SOURCES[key].env,
-        databaseError: databaseError instanceof Error ? databaseError.message : String(databaseError),
-        dataSourceError: dataSourceError instanceof Error ? dataSourceError.message : String(dataSourceError),
-      });
-      throw new CorePortalError(NOTION_ORIGINAL_DATABASE_ACCESS_ERROR);
+    } catch {
+      try {
+        const source = await notion().dataSources.retrieve({ data_source_id: configuredId });
+        const id = source.id.replaceAll("-", "");
+        querySourceCache.set(key, id);
+        return id;
+      } catch {
+        // Fall through to title-based discovery. This also recovers from a
+        // stale ID after a Notion database/data-source migration.
+      }
     }
   }
+
+  const expected = CORE_SOURCES[key].title.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const results = await notion().search({
+    query: CORE_SOURCES[key].title.replace(/^\d+\s*[—-]\s*/, ""),
+    filter: { property: "object", value: "data_source" },
+    page_size: 100,
+  });
+  const source = results.results.find((item: any) => {
+    if (item.object !== "data_source") return false;
+    const title = Array.isArray(item.title) ? item.title.map((part: any) => part.plain_text || "").join("") : "";
+    const normalized = title.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    return normalized === expected || (normalized.includes("people") && normalized.includes("relationships") && normalized.includes("core"));
+  });
+  if (source) {
+    const id = source.id.replaceAll("-", "");
+    querySourceCache.set(key, id);
+    return id;
+  }
+
+  throw new CorePortalError(`${CORE_SOURCES[key].title} was not found. Share the original database with the Notion integration, then redeploy.`);
 };
 const plain = (items: Array<{ plain_text?: string }> = []) => items.map((item) => item.plain_text || "").join("").trim();
 const valueOf = (property: any): string => {
@@ -115,7 +131,9 @@ async function query(key: CoreSourceKey) {
         // data source object. Querying with the stable 2022 database endpoint
         // remains valid and uses the same server-side integration token.
         const auth = process.env.NOTION_API_KEY?.trim();
-        const response = await fetch(`https://api.notion.com/v1/databases/${databaseId(key)}/query`, {
+        const originalDatabaseId = databaseId(key);
+        if (!originalDatabaseId) throw new CorePortalError(NOTION_ORIGINAL_DATABASE_ACCESS_ERROR);
+        const response = await fetch(`https://api.notion.com/v1/databases/${originalDatabaseId}/query`, {
           method: "POST",
           headers: { Authorization: `Bearer ${auth}`, "Notion-Version": "2022-06-28", "Content-Type": "application/json" },
           body: JSON.stringify({ page_size: 100, ...(cursor ? { start_cursor: cursor } : {}) }),
